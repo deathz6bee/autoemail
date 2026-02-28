@@ -20,6 +20,7 @@ export default function App() {
   const [abEnabled, setAbEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
   const [delaySeconds, setDelaySeconds] = useState(60);
+  const [dark, setDark] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [testEmail, setTestEmail] = useState('');
@@ -152,18 +153,21 @@ export default function App() {
   };
 
   return (
-    <div style={{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:'#f8fafc'}}>
+    <div style={{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:dark?'#0f172a':'#f8fafc',color:dark?'#f1f5f9':'#1e293b',transition:'background 0.2s'}}>
       {/* Nav */}
-      <nav style={{background:'#fff',borderBottom:'1px solid #e2e8f0',padding:'0 24px',display:'flex',alignItems:'center',gap:24,height:56}}>
-        <span style={{fontWeight:700,fontSize:16,color:'#1e293b'}}>✉️ AutoEmail</span>
-        <div style={{display:'flex',gap:4,marginLeft:'auto'}}>
+      <nav style={{background:dark?'#1e293b':'#fff',borderBottom:`1px solid ${dark?'#334155':'#e2e8f0'}`,padding:'0 24px',display:'flex',alignItems:'center',gap:24,height:56}}>
+        <span style={{fontWeight:700,fontSize:16,color:dark?'#f1f5f9':'#1e293b'}}>✉️ AutoEmail</span>
+        <div style={{display:'flex',gap:4,marginLeft:'auto',alignItems:'center'}}>
           {(['list','create','test'] as const).map(v => (
             <button key={v} onClick={() => { setView(v); setStep(1); }}
               style={{padding:'6px 14px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:500,fontSize:13,
-                background: view===v ? '#2563eb' : 'transparent', color: view===v ? '#fff' : '#64748b'}}>
+                background: view===v ? '#2563eb' : 'transparent', color: view===v ? '#fff' : dark?'#94a3b8':'#64748b'}}>
               {v==='list'?'Campaigns':v==='create'?'+ New Campaign':'Quick Test'}
             </button>
           ))}
+          <button onClick={()=>setDark(!dark)} style={{marginLeft:8,background:'none',border:`1px solid ${dark?'#334155':'#e2e8f0'}`,borderRadius:8,padding:'5px 10px',cursor:'pointer',fontSize:15}}>
+            {dark?'☀️':'🌙'}
+          </button>
         </div>
       </nav>
 
@@ -193,9 +197,7 @@ export default function App() {
                     {c.subject} · {c.recipients?.[0]?.count ?? 0} recipients · {new Date(c.scheduled_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})} IST
                   </div>
                 </div>
-                {c.status==='scheduled' && (
-                  <button onClick={() => deleteCampaign(c.id)} style={{color:'#ef4444',background:'none',border:'none',cursor:'pointer',fontSize:13}}>Delete</button>
-                )}
+                <button onClick={() => deleteCampaign(c.id)} style={{color:'#ef4444',background:'none',border:'none',cursor:'pointer',fontSize:13}}>Delete</button>
               </div>
             ))}
           </div>
