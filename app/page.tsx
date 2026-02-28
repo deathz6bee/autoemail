@@ -166,7 +166,7 @@ export default function App() {
     failed:{background:'#fee2e2',color:'#dc2626'}, draft:{background:'#f1f5f9',color:'#64748b'}
   };
 
-  const navItems: {v:View,label:string}[] = [{v:'list',label:'Campaigns'},{v:'create',label:'+ New'},{v:'contacts',label:'Contacts'},{v:'test',label:'Test Email'}];
+  const navItems: {v:View,label:string}[] = [{v:'list',label:'Campaigns'},{v:'create',label:'+ New'},{v:'test',label:'Test Email'}];
   return (
     <div style={{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:bg,color:text,transition:'background 0.2s'}}>
       <nav style={{background:card,borderBottom:`1px solid ${border}`,padding:'0 24px',display:'flex',alignItems:'center',height:56}}>
