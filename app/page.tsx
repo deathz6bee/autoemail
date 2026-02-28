@@ -217,61 +217,6 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTACTS */}
-        {view==='contacts'&&(
-          <div>
-            <h2 style={{fontSize:20,fontWeight:700,marginBottom:16}}>Contacts</h2>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
-              {/* CSV Upload */}
-              <div style={{background:card,borderRadius:12,border:`1px solid ${border}`,padding:20}}>
-                <div style={{fontWeight:600,marginBottom:10}}>Upload CSV</div>
-                <label style={{display:'block',border:`2px dashed ${border}`,borderRadius:10,padding:20,textAlign:'center',cursor:'pointer'}}>
-                  <input type="file" accept=".csv" style={{display:'none'}} onChange={e=>e.target.files?.[0]&&handleCSVContacts(e.target.files[0])}/>
-                  <div style={{fontSize:28,marginBottom:4}}>📂</div>
-                  <div style={{fontSize:13,color:muted}}>Click to upload CSV</div>
-                </label>
-              </div>
-              {/* Manual paste */}
-              <div style={{background:card,borderRadius:12,border:`1px solid ${border}`,padding:20}}>
-                <div style={{fontWeight:600,marginBottom:10}}>Paste Emails</div>
-                <ManualPaste onSave={handleManualEmails} inp={inp} btn={btn} muted={muted}/>
-              </div>
-            </div>
-            {uploadResult&&<div style={{padding:'10px 14px',borderRadius:8,marginBottom:12,fontSize:13,background:uploadResult.includes('✅')?'#f0fdf4':'#fee2e2',color:uploadResult.includes('✅')?'#15803d':'#dc2626'}}>{uploadResult}</div>}
-            {/* Contacts table */}
-            <div style={{background:card,borderRadius:12,border:`1px solid ${border}`,padding:16}}>
-              <div style={{display:'flex',gap:10,marginBottom:12,alignItems:'center'}}>
-                <input style={{...inp,flex:1}} placeholder="Search..." value={contactSearch} onChange={e=>setContactSearch(e.target.value)}/>
-                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer',whiteSpace:'nowrap'}}>
-                  <input type="checkbox" checked={showUsed} onChange={e=>setShowUsed(e.target.checked)}/> Show used
-                </label>
-                <span style={{fontSize:13,color:muted,whiteSpace:'nowrap'}}>{allContacts.length} total</span>
-              </div>
-              <div style={{maxHeight:400,overflowY:'auto'}}>
-                <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
-                  <thead><tr style={{background:d?'#0f172a':'#f8fafc',position:'sticky',top:0}}>
-                    {['Email','Name','Business','City','Safe?','Used?'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',color:muted,fontWeight:600}}>{h}</th>)}
-                  </tr></thead>
-                  <tbody>{filteredContacts.map(c=>(
-                    <tr key={c.id} style={{borderTop:`1px solid ${border}`}}>
-                      <td style={{padding:'7px 10px'}}>{c.email}</td>
-                      <td style={{padding:'7px 10px',color:muted}}>{c.first_name||'-'}</td>
-                      <td style={{padding:'7px 10px',color:muted}}>{c.business_name||'-'}</td>
-                      <td style={{padding:'7px 10px',color:muted}}>{c.city||'-'}</td>
-                      <td style={{padding:'7px 10px',color:c.is_safe_to_send==='true'||c.is_safe_to_send==='1'?'#22c55e':'#64748b'}}>
-                        {c.is_safe_to_send==='true'||c.is_safe_to_send==='1'?'✅':'—'}
-                      </td>
-                      <td style={{padding:'7px 10px',color:c.contact_campaign_map?.length?'#f59e0b':'#22c55e'}}>
-                        {c.contact_campaign_map?.length?'Used':'Fresh'}
-                      </td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-                {contactsLoading&&<div style={{textAlign:'center',padding:20,color:muted}}>Loading...</div>}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* CREATE CAMPAIGN */}
         {view==='create'&&(
