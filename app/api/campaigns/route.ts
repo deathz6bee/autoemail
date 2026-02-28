@@ -51,13 +51,6 @@ export async function POST(req: Request) {
   );
   if (recErr) return NextResponse.json({ error: recErr.message }, { status: 500 });
 
-  // Mark contacts as used in this campaign
-  if (contact_ids?.length) {
-    await supabase.from('contact_campaign_map').insert(
-      contact_ids.map((cid: string) => ({ contact_id: cid, campaign_id: campaign.id }))
-    );
-  }
-
   return NextResponse.json({ success: true, campaign });
 }
 
