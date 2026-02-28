@@ -22,13 +22,23 @@ const transporter = nodemailer.createTransport({
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 export async function GET(req: Request) {
-  // Verify this is called by Vercel Cron (not a random person hitting the URL) (temporary disabled)
- // const authHeader = req.headers.get('authorization');
-  //if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-   // return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  //}
+  // Verify this is called by Vercel Cron (not a random person hitting the URL)
+  const authHeader = req.headers.get('authorization');
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const now = new Date();
+
+  // Check IST send window: 8pm-1am IST = 14:30-19:30 UTC
+  const utcHour = now.getUTCHours();
+  const utcMin = now.getUTCMinutes();
+  const utcTotal = utcHour * 60 + utcMin;
+  const windowStart = 14 * 60 + 30; // 8pm IST
+  const windowEnd = 19 * 60 + 30;   // 1am IST next day
+  if (!(utcTotal >= windowStart && utcTotal <= windowEnd)) {
+    return NextResponse.json({ message: `Outside send window. Current UTC: ${utcHour}:${String(utcMin).padStart(2,'0')}` });
+  }
 
   // Find campaigns scheduled up to now that are still in 'scheduled' state
   const { data: campaigns, error } = await supabase
@@ -60,16 +70,16 @@ export async function GET(req: Request) {
     for (const recipient of recipients ?? []) {
       try {
         // Personalize body — swap {{name}} with recipient name
-        const personalizedBody = campaign.body
+        const personalizedBody = (recipient.body_override || campaign.body)
           .replace(/{{name}}/gi, recipient.name || 'there')
-          .replace(/{{email}}/gi, recipient.email);
+          .replace(/{{email}}/gi, recipient.email)
+          .replace(/{{first_name}}/gi, recipient.name?.split(' ')[0] || 'there')
+          .replace(/{{business_name}}/gi, recipient.metadata ? JSON.parse(recipient.metadata).business_name || '' : '')
+          .replace(/{{city}}/gi, recipient.metadata ? JSON.parse(recipient.metadata).city || '' : '')
+          .replace(/{{state}}/gi, recipient.metadata ? JSON.parse(recipient.metadata).state || '' : '')
+          + '\n\n--\nTo unsubscribe, reply with "unsubscribe".';
 
-        await transporter.sendMail({
-          from: `"${campaign.from_name}" <${process.env.GMAIL_USER}>`,
-          to: recipient.email,
-          subject: campaign.subject,
-          html: personalizedBody,
-        });
+        const subject = recipient.subject_override || campaign.subject;
 
         await supabase.from('recipients').update({
           status: 'sent',
