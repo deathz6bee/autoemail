@@ -85,8 +85,8 @@ export async function GET(req: Request) {
         failed++;
       }
 
-      // 3 second delay between emails — avoids spam flags + rate limits
-      await delay(3000);
+      // Custom delay between emails (default 60s if not set)
+      await delay((campaign.delay_seconds ?? 60) * 1000);
     }
 
     // Mark campaign done

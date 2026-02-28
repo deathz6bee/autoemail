@@ -31,6 +31,7 @@ export default function Home() {
     subject: '',
     body: '',
     scheduled_at: '',
+    delay_seconds: 60,
   });
   const [recipientText, setRecipientText] = useState('');
   const [error, setError] = useState('');
@@ -162,6 +163,21 @@ export default function Home() {
               <span className="text-sm font-medium text-gray-700">Subject Line</span>
               <input className="input mt-1" placeholder="Quick question for you"
                 value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Delay Between Emails — {form.delay_seconds}s ({Math.floor(form.delay_seconds / 60)}m {form.delay_seconds % 60}s)
+              </span>
+              <input
+                type="range" min={60} max={300} step={10}
+                className="w-full mt-1"
+                value={form.delay_seconds}
+                onChange={e => setForm(f => ({ ...f, delay_seconds: Number(e.target.value) }))}
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-0.5">
+                <span>1 min</span><span>2.5 min</span><span>5 min</span>
+              </div>
             </label>
 
             <label className="block">
