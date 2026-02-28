@@ -7,7 +7,7 @@ type Campaign = { id: string; name: string; subject: string; status: string; sch
 type FollowUpRec = { id: string; email: string; name: string; selected: boolean };
 
 const TAGS = ['{{first_name}}','{{business_name}}','{{company}}','{{city}}','{{state}}','{{email}}'];
-type View = 'list'|'create'|'test'|'followup'|'contacts';
+type View = 'list'|'create'|'test'|'followup';
 
 export default function App() {
   const [dark, setDark] = useState(false);
@@ -167,7 +167,6 @@ export default function App() {
   };
 
   const navItems: {v:View,label:string}[] = [{v:'list',label:'Campaigns'},{v:'create',label:'+ New'},{v:'contacts',label:'Contacts'},{v:'test',label:'Test Email'}];
-
   return (
     <div style={{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:bg,color:text,transition:'background 0.2s'}}>
       <nav style={{background:card,borderBottom:`1px solid ${border}`,padding:'0 24px',display:'flex',alignItems:'center',height:56}}>
