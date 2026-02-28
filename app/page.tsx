@@ -68,7 +68,11 @@ export default function Home() {
     const res = await fetch('/api/campaigns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, recipients }),
+      body: JSON.stringify({ 
+        ...form, 
+        scheduled_at: new Date(form.scheduled_at).toISOString(),
+        recipients 
+      }),
     });
     setLoading(false);
 
@@ -225,6 +229,7 @@ export default function Home() {
           border-radius: 8px;
           padding: 8px 12px;
           font-size: 14px;
+          color: #111;
           outline: none;
           transition: border-color 0.15s;
         }
