@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
 
-type Contact = { id: string; email: string; first_name?: string; business_name?: string; phone?: string; city?: string; state?: string; overall_score?: string; is_safe_to_send?: string; contact_campaign_map?: any[] };
+type Recipient = { email: string; first_name?: string; business_name?: string; phone?: string; city?: string; state?: string; overall_score?: string; is_safe_to_send?: string; [key: string]: string | undefined };
 type Variant = { subject: string; body: string };
 type Campaign = { id: string; name: string; subject: string; status: string; scheduled_at: string; notes?: string; sent_count?: number; total_count?: number; recipients: { count: number }[] };
 type FollowUpRec = { id: string; email: string; name: string; selected: boolean };
@@ -11,7 +11,7 @@ type View = 'list'|'create'|'test'|'followup'|'contacts';
 
 export default function App() {
   const [dark, setDark] = useState(false);
-  const [view, setView] = useState<View>('list');
+  const [view, setView] = useState<'list'|'create'|'test'|'followup'>('list');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
@@ -19,14 +19,11 @@ export default function App() {
   const [notes, setNotes] = useState('');
   const [windowStart, setWindowStart] = useState('20:00');
   const [windowEnd, setWindowEnd] = useState('01:00');
-  // Contacts
-  const [allContacts, setAllContacts] = useState<Contact[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [contactSearch, setContactSearch] = useState('');
-  const [showUsed, setShowUsed] = useState(false);
-  const [contactsLoading, setContactsLoading] = useState(false);
-  const [uploadResult, setUploadResult] = useState('');
-  // Compose
+  const [dailyLimit, setDailyLimit] = useState(40);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [safeFilter, setSafeFilter] = useState(true);
+  const [filteredCount, setFilteredCount] = useState(0);
+  const [csvError, setCsvError] = useState('');
   const [variants, setVariants] = useState<Variant[]>([{subject:'',body:''},{subject:'',body:''}]);
   const [activeVariant, setActiveVariant] = useState(0);
   const [abEnabled, setAbEnabled] = useState(false);
@@ -34,13 +31,11 @@ export default function App() {
   const [delaySeconds, setDelaySeconds] = useState(60);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  // Test
   const [testEmail, setTestEmail] = useState('');
   const [testSubject, setTestSubject] = useState('');
   const [testBody, setTestBody] = useState('');
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState('');
-  // Follow-up
   const [fuCampaign, setFuCampaign] = useState<Campaign|null>(null);
   const [fuRecs, setFuRecs] = useState<FollowUpRec[]>([]);
   const [fuSearch, setFuSearch] = useState('');
@@ -58,71 +53,28 @@ export default function App() {
   const btn: React.CSSProperties = {background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'10px 24px',fontSize:14,fontWeight:600,cursor:'pointer'};
 
   const fetchCampaigns = async () => { try { const r = await fetch('/api/campaigns'); setCampaigns(await r.json()); } catch {} };
-  const fetchContacts = async () => {
-    setContactsLoading(true);
-    try { const r = await fetch('/api/contacts'); setAllContacts(await r.json()); } catch {}
-    setContactsLoading(false);
-  };
   useEffect(() => { fetchCampaigns(); }, []);
-  useEffect(() => { if (view==='contacts'||view==='create') fetchContacts(); }, [view]);
 
-  const handleCSVContacts = (file: File) => {
+  const handleCSV = (file: File) => {
+    setCsvError('');
     const reader = new FileReader();
-    reader.onload = async (e) => {
+    reader.onload = (e) => {
       const text = e.target?.result as string;
       const lines = text.trim().split('\n');
       const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/"/g,''));
-      if (!headers.includes('email')) { setUploadResult('❌ CSV must have email column'); return; }
-      const contacts = lines.slice(1).map(line => {
+      if (!headers.includes('email')) { setCsvError('CSV must have an "email" column'); return; }
+      const all = lines.slice(1).map(line => {
         const vals = line.split(',').map(v=>v.trim().replace(/"/g,''));
-        const obj: any = {};
-        headers.forEach((h,i) => { obj[h]=vals[i]||''; });
+        const obj: Recipient = {email:''};
+        headers.forEach((h,i)=>{ obj[h]=vals[i]||''; });
         return obj;
-      }).filter(c=>c.email);
-      const res = await fetch('/api/contacts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({contacts}) });
-      const data = await res.json();
-      setUploadResult(res.ok ? `✅ ${data.count} contacts saved` : `❌ ${data.error}`);
-      fetchContacts();
+      }).filter(r=>r.email);
+      const safe = all.filter(r => !safeFilter || !r.is_safe_to_send || r.is_safe_to_send==='true' || r.is_safe_to_send==='1');
+      setFilteredCount(all.length - safe.length);
+      setRecipients(safe);
     };
     reader.readAsText(file);
   };
-
-  const handleManualEmails = async (text: string) => {
-    const contacts = text.split('\n').map(l=>l.trim()).filter(Boolean).map(line => {
-      const m = line.match(/^(.+?)\s*<(.+?)>$/);
-      return m ? {first_name: m[1].trim(), email: m[2].trim()} : {email: line};
-    });
-    const res = await fetch('/api/contacts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({contacts}) });
-    const data = await res.json();
-    setUploadResult(res.ok ? `✅ ${data.count} contacts saved` : `❌ ${data.error}`);
-    fetchContacts();
-  };
-
-  const toggleContact = (id: string) => setSelectedIds(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
-  const selectAll = (ids: string[]) => setSelectedIds(new Set(ids));
-  const clearAll = () => setSelectedIds(new Set());
-
-  const filteredContacts = allContacts.filter(c => {
-    const matchSearch = !contactSearch || c.email.includes(contactSearch) || (c.business_name||'').toLowerCase().includes(contactSearch.toLowerCase()) || (c.first_name||'').toLowerCase().includes(contactSearch.toLowerCase());
-    const matchUsed = showUsed || !c.contact_campaign_map?.length;
-    return matchSearch && matchUsed;
-  });
-
-  const selectedContacts = allContacts.filter(c => selectedIds.has(c.id));
-
-  const preview = (text: string, c?: Contact) => {
-    if (!c) return text;
-    return text
-      .replace(/{{first_name}}/gi, c.first_name||c.business_name?.split(' ')[0]||'there')
-      .replace(/{{business_name}}/gi, c.business_name||'')
-      .replace(/{{company}}/gi, c.business_name||'')
-      .replace(/{{city}}/gi, c.city||'')
-      .replace(/{{state}}/gi, c.state||'')
-      .replace(/{{email}}/gi, c.email||'');
-  };
-
-  const updateVariant = (idx: number, field: 'subject'|'body', val: string) =>
-    setVariants(v=>v.map((x,i)=>i===idx?{...x,[field]:val}:x));
 
   const insertTag = (tag: string) => {
     const ta = bodyRef.current; if (!ta) return;
@@ -131,35 +83,47 @@ export default function App() {
     setTimeout(()=>{ ta.selectionStart=ta.selectionEnd=s+tag.length; ta.focus(); },0);
   };
 
+  const updateVariant = (idx: number, field: 'subject'|'body', val: string) =>
+    setVariants(v=>v.map((x,i)=>i===idx?{...x,[field]:val}:x));
+
+  const preview = (text: string, r?: Recipient) => {
+    if (!r) return text;
+    return text
+      .replace(/{{first_name}}/gi, r.first_name||r.business_name?.split(' ')[0]||'there')
+      .replace(/{{business_name}}/gi, r.business_name||'')
+      .replace(/{{company}}/gi, r.business_name||'')
+      .replace(/{{city}}/gi, r.city||'')
+      .replace(/{{state}}/gi, r.state||'')
+      .replace(/{{email}}/gi, r.email||'');
+  };
+
   const handleSubmit = async () => {
     setError('');
     if (!name||!fromName||!scheduledAt) { setError('Fill name, from name and schedule time'); return; }
-    if (!selectedContacts.length) { setError('Select contacts for this campaign'); return; }
+    if (!recipients.length) { setError('Upload a CSV first'); return; }
     if (!variants[0].subject||!variants[0].body) { setError('Fill subject and body'); return; }
-    const recs = selectedContacts.map((c,i) => {
-      const isB = abEnabled && variants[1].subject && i >= Math.floor(selectedContacts.length/2);
-      return { email:c.email, name:c.first_name||c.business_name||'',
+    const recs = recipients.map((r,i) => {
+      const isB = abEnabled && variants[1].subject && i >= Math.floor(recipients.length/2);
+      return { email:r.email, name:r.first_name||r.business_name||'',
         subject_override: isB?variants[1].subject:null,
-        body_override: isB?variants[1].body:null,
-        metadata: JSON.stringify(c) };
+        body_override: isB?variants[1].body:null, metadata:JSON.stringify(r) };
     });
     setSubmitting(true);
     const res = await fetch('/api/campaigns', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name, from_name:fromName, subject:variants[0].subject, body:variants[0].body,
         scheduled_at:new Date(scheduledAt).toISOString(), delay_seconds:delaySeconds, notes,
-        window_start:windowStart, window_end:windowEnd,
-        total_count:selectedContacts.length, recipients:recs,
-        contact_ids: Array.from(selectedIds) }) });
+        window_start:windowStart, window_end:windowEnd, daily_limit:dailyLimit,
+        total_count:recipients.length, recipients:recs }) });
     setSubmitting(false);
     if (res.ok) {
       setView('list'); setStep(1); setName(''); setFromName(''); setNotes('');
-      setSelectedIds(new Set()); setVariants([{subject:'',body:''},{subject:'',body:''}]); setScheduledAt('');
+      setRecipients([]); setVariants([{subject:'',body:''},{subject:'',body:''}]); setScheduledAt('');
       fetchCampaigns();
     } else { const d2=await res.json(); setError(d2.error||'Error'); }
   };
 
   const duplicate = async (id: string) => {
-    await fetch('/api/campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'duplicate',parent_campaign_id:id}) });
+    await fetch('/api/campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'duplicate',parent_campaign_id:id}) });
     fetchCampaigns();
   };
 
@@ -177,15 +141,15 @@ export default function App() {
   };
 
   const sendFollowUp = async () => {
-    const selected = fuRecs.filter(r=>r.selected);
-    if (!selected.length||!fuSubject||!fuBody||!fuSchedule) return;
+    const sel = fuRecs.filter(r=>r.selected);
+    if (!sel.length||!fuSubject||!fuBody||!fuSchedule) return;
     setFuSubmitting(true);
     await fetch('/api/campaigns', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name:fuCampaign?.name+' — Follow Up', from_name:fromName||'Follow Up',
         subject:fuSubject, body:fuBody, scheduled_at:new Date(fuSchedule).toISOString(),
         delay_seconds:delaySeconds, window_start:windowStart, window_end:windowEnd,
-        parent_campaign_id:fuCampaign?.id, total_count:selected.length,
-        recipients:selected.map(r=>({email:r.email,name:r.name})) }) });
+        parent_campaign_id:fuCampaign?.id, total_count:sel.length, daily_limit:dailyLimit,
+        recipients:sel.map(r=>({email:r.email,name:r.name})) }) });
     setFuSubmitting(false); setView('list'); fetchCampaigns();
   };
 

@@ -16,7 +16,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const { name, subject, body, from_name, scheduled_at, recipients, delay_seconds, notes, parent_campaign_id, action, window_start, window_end, contact_ids, total_count } = await req.json();
+  const { name, subject, body, from_name, scheduled_at, recipients, delay_seconds, notes, parent_campaign_id, action, window_start, window_end, daily_limit, total_count } = await req.json();
 
   // Duplicate action
   if (action === 'duplicate' && parent_campaign_id) {
@@ -38,10 +38,10 @@ export async function POST(req: Request) {
 
   const { data: campaign, error: campErr } = await supabase
     .from('campaigns')
-    .insert({ name, subject, body, from_name, scheduled_at, delay_seconds: delay_seconds || 60,
-      notes: notes || '', parent_campaign_id: parent_campaign_id || null,
-      window_start: window_start || '20:00', window_end: window_end || '01:00',
-      total_count: recipients.length, sent_count: 0 })
+    .insert({ name, subject, body, from_name, scheduled_at, delay_seconds: delay_seconds||60,
+      notes: notes||'', parent_campaign_id: parent_campaign_id||null,
+      window_start: window_start||'20:00', window_end: window_end||'01:00',
+      daily_limit: daily_limit||40, total_count: recipients.length, sent_count:0 })
     .select().single();
   if (campErr) return NextResponse.json({ error: campErr.message }, { status: 500 });
 

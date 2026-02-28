@@ -69,7 +69,8 @@ export async function GET(req: Request) {
       .from('recipients')
       .select('*')
       .eq('campaign_id', campaign.id)
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .limit(campaign.daily_limit || 40); // Only send today's batch
 
     let sent = 0, failed = 0;
 
