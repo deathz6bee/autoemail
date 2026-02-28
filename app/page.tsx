@@ -74,7 +74,7 @@ export default function Home() {
 
     if (res.ok) {
       setView('list');
-      setForm({ name: '', from_name: '', subject: '', body: '', scheduled_at: '' });
+      setForm({ name: '', from_name: '', subject: '', body: '', scheduled_at: '', delay_seconds: 60 });
       setRecipientText('');
       fetchCampaigns();
     } else {
