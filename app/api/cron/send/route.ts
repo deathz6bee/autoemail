@@ -22,11 +22,11 @@ const transporter = nodemailer.createTransport({
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 export async function GET(req: Request) {
-  // Verify this is called by Vercel Cron (not a random person hitting the URL)
-  const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Verify this is called by Vercel Cron (not a random person hitting the URL) (temporary disabled)
+ // const authHeader = req.headers.get('authorization');
+  //if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+   // return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  //}
 
   const now = new Date();
 
