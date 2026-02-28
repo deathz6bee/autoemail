@@ -5,13 +5,13 @@ type Recipient = { email: string; first_name?: string; business_name?: string; p
 type Variant = { subject: string; body: string };
 type Campaign = { id: string; name: string; subject: string; status: string; scheduled_at: string; notes?: string; sent_count?: number; total_count?: number; recipients: { count: number }[] };
 type FollowUpRec = { id: string; email: string; name: string; selected: boolean };
+type View = 'list'|'create'|'test'|'followup';
 
 const TAGS = ['{{first_name}}','{{business_name}}','{{company}}','{{city}}','{{state}}','{{email}}'];
-type View = 'list'|'create'|'test'|'followup';
 
 export default function App() {
   const [dark, setDark] = useState(false);
-  const [view, setView] = useState<'list'|'create'|'test'|'followup'>('list');
+  const [view, setView] = useState<View>('list');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
@@ -166,17 +166,16 @@ export default function App() {
     failed:{background:'#fee2e2',color:'#dc2626'}, draft:{background:'#f1f5f9',color:'#64748b'}
   };
 
-  const navItems: {v:View,label:string}[] = [{v:'list',label:'Campaigns'},{v:'create',label:'+ New'},{v:'test',label:'Test Email'}];
   return (
     <div style={{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:bg,color:text,transition:'background 0.2s'}}>
       <nav style={{background:card,borderBottom:`1px solid ${border}`,padding:'0 24px',display:'flex',alignItems:'center',height:56}}>
         <span style={{fontWeight:700,fontSize:16}}>✉️ AutoEmail</span>
         <div style={{display:'flex',gap:4,marginLeft:'auto',alignItems:'center'}}>
-          {navItems.map(({v,label})=>(
+          {(['list','create','test'] as const).map(v=>(
             <button key={v} onClick={()=>{setView(v);setStep(1);setError('');}}
               style={{padding:'6px 14px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:500,fontSize:13,
                 background:view===v?'#2563eb':'transparent',color:view===v?'#fff':muted}}>
-              {label}
+              {v==='list'?'Campaigns':v==='create'?'+ New':'Test Email'}
             </button>
           ))}
           <button onClick={()=>setDark(!d)} style={{marginLeft:8,background:'none',border:`1px solid ${border}`,borderRadius:8,padding:'5px 10px',cursor:'pointer',fontSize:15}}>
@@ -185,7 +184,7 @@ export default function App() {
         </div>
       </nav>
 
-      <div style={{maxWidth:900,margin:'32px auto',padding:'0 16px'}}>
+      <div style={{maxWidth:860,margin:'32px auto',padding:'0 16px'}}>
 
         {/* CAMPAIGNS LIST */}
         {view==='list'&&(
@@ -217,12 +216,11 @@ export default function App() {
           </div>
         )}
 
-
-        {/* CREATE CAMPAIGN */}
+        {/* CREATE */}
         {view==='create'&&(
           <div>
             <div style={{display:'flex',gap:0,marginBottom:24}}>
-              {['Details','Select Contacts','Compose','Schedule'].map((s,i)=>(
+              {['Details','Recipients','Compose','Schedule'].map((s,i)=>(
                 <div key={s} style={{display:'flex',alignItems:'center'}}>
                   <div style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}} onClick={()=>i+1<step&&setStep(i+1)}>
                     <div style={{width:26,height:26,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,
@@ -233,67 +231,70 @@ export default function App() {
                 </div>
               ))}
             </div>
-
             <div style={{background:card,borderRadius:16,border:`1px solid ${border}`,padding:28}}>
               {error&&<div style={{background:'#fee2e2',color:'#dc2626',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13}}>{error}</div>}
 
-              {/* STEP 1 — Details */}
               {step===1&&(
                 <div>
                   <h3 style={{fontWeight:700,fontSize:16,marginBottom:20}}>Campaign Details</h3>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
-                    <div><label style={lbl}>Campaign Name</label><input style={inp} placeholder="Q1 Outreach" value={name} onChange={e=>setName(e.target.value)}/></div>
+                    <div><label style={lbl}>Campaign Name</label><input style={inp} placeholder="SEO Outreach Q1" value={name} onChange={e=>setName(e.target.value)}/></div>
                     <div><label style={lbl}>From Name</label><input style={inp} placeholder="Aftab from DigiXFlyy" value={fromName} onChange={e=>setFromName(e.target.value)}/></div>
                   </div>
                   <div style={{marginBottom:16}}>
                     <label style={lbl}>Internal Notes (optional)</label>
-                    <textarea style={{...inp,height:72,resize:'vertical'}} placeholder="e.g. Fitness leads from Google Maps" value={notes} onChange={e=>setNotes(e.target.value)}/>
+                    <textarea style={{...inp,height:64,resize:'vertical'}} placeholder="e.g. Fitness leads from Google Maps" value={notes} onChange={e=>setNotes(e.target.value)}/>
                   </div>
                   <button style={btn} onClick={()=>{if(!name||!fromName){setError('Fill both fields');return;}setError('');setStep(2);}}>Next →</button>
                 </div>
               )}
 
-              {/* STEP 2 — Select Contacts */}
               {step===2&&(
                 <div>
-                  <h3 style={{fontWeight:700,fontSize:16,marginBottom:4}}>Select Contacts</h3>
-                  <p style={{fontSize:13,color:muted,marginBottom:12}}>Green = fresh (never used). Yellow = already used in another campaign.</p>
-                  <div style={{display:'flex',gap:10,marginBottom:12,alignItems:'center',flexWrap:'wrap'}}>
-                    <input style={{...inp,flex:1,minWidth:180}} placeholder="Search email, name, business..." value={contactSearch} onChange={e=>setContactSearch(e.target.value)}/>
-                    <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer',whiteSpace:'nowrap'}}>
-                      <input type="checkbox" checked={showUsed} onChange={e=>setShowUsed(e.target.checked)}/> Show used
-                    </label>
-                    <button onClick={()=>selectAll(filteredContacts.map(c=>c.id))} style={{...btn,padding:'6px 12px',fontSize:12}}>Select All ({filteredContacts.length})</button>
-                    <button onClick={clearAll} style={{...btn,padding:'6px 12px',fontSize:12,background:'#f1f5f9',color:'#475569'}}>Clear</button>
-                  </div>
-                  {contactsLoading?<div style={{textAlign:'center',padding:32,color:muted}}>Loading contacts...</div>:(
-                    <div style={{maxHeight:320,overflowY:'auto',border:`1px solid ${border}`,borderRadius:8,marginBottom:12}}>
-                      {filteredContacts.length===0&&<div style={{padding:24,textAlign:'center',color:muted}}>No contacts found. <button onClick={()=>setView('contacts')} style={{color:'#2563eb',background:'none',border:'none',cursor:'pointer'}}>Upload contacts first →</button></div>}
-                      {filteredContacts.map(c=>(
-                        <div key={c.id} onClick={()=>toggleContact(c.id)}
-                          style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderBottom:`1px solid ${border}`,cursor:'pointer',
-                            background:selectedIds.has(c.id)?(d?'#1e3a5f':'#eff6ff'):card}}>
-                          <input type="checkbox" checked={selectedIds.has(c.id)} onChange={()=>toggleContact(c.id)} onClick={e=>e.stopPropagation()}/>
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:13,fontWeight:500}}>{c.email}</div>
-                            <div style={{fontSize:11,color:muted}}>{[c.first_name,c.business_name,c.city,c.state].filter(Boolean).join(' · ')}</div>
-                          </div>
-                          <span style={{fontSize:11,padding:'2px 6px',borderRadius:4,background:c.contact_campaign_map?.length?'#fef3c7':'#dcfce7',color:c.contact_campaign_map?.length?'#92400e':'#15803d'}}>
-                            {c.contact_campaign_map?.length?'used':'fresh'}
-                          </span>
-                        </div>
-                      ))}
+                  <h3 style={{fontWeight:700,fontSize:16,marginBottom:8}}>Upload Recipients CSV</h3>
+                  <p style={{fontSize:13,color:muted,marginBottom:12}}>Columns: <code>email, first_name, business_name, city, state, is_safe_to_send</code></p>
+                  <label style={{display:'flex',alignItems:'center',gap:6,marginBottom:12,cursor:'pointer',fontSize:13}}>
+                    <input type="checkbox" checked={safeFilter} onChange={e=>setSafeFilter(e.target.checked)}/>
+                    <span style={{color:muted}}>Auto-remove unsafe (<code>is_safe_to_send = false</code>)</span>
+                  </label>
+                  {csvError&&<div style={{background:'#fee2e2',color:'#dc2626',borderRadius:8,padding:'10px 14px',marginBottom:10,fontSize:13}}>{csvError}</div>}
+                  <label style={{display:'block',border:`2px dashed ${border}`,borderRadius:12,padding:28,textAlign:'center',cursor:'pointer',marginBottom:12}}>
+                    <input type="file" accept=".csv" style={{display:'none'}} onChange={e=>e.target.files?.[0]&&handleCSV(e.target.files[0])}/>
+                    <div style={{fontSize:28,marginBottom:6}}>📂</div>
+                    <div style={{fontWeight:600,color:muted}}>Click to upload CSV</div>
+                  </label>
+                  {recipients.length>0&&(
+                    <div>
+                      <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'10px 14px',fontSize:13,color:'#15803d',marginBottom:8}}>
+                        ✅ {recipients.length} recipients loaded{filteredCount>0&&` · ${filteredCount} unsafe removed`}
+                      </div>
+                      <div style={{maxHeight:130,overflowY:'auto',border:`1px solid ${border}`,borderRadius:8}}>
+                        <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
+                          <thead><tr style={{background:d?'#0f172a':'#f8fafc'}}>
+                            {['Email','Name','City','Safe?'].map(h=><th key={h} style={{padding:'6px 10px',textAlign:'left',color:muted,fontWeight:600}}>{h}</th>)}
+                          </tr></thead>
+                          <tbody>{recipients.slice(0,4).map((r,i)=>(
+                            <tr key={i} style={{borderTop:`1px solid ${border}`}}>
+                              <td style={{padding:'6px 10px'}}>{r.email}</td>
+                              <td style={{padding:'6px 10px',color:muted}}>{r.first_name||r.business_name||'-'}</td>
+                              <td style={{padding:'6px 10px',color:muted}}>{r.city||'-'}</td>
+                              <td style={{padding:'6px 10px',color:r.is_safe_to_send==='true'||r.is_safe_to_send==='1'?'#22c55e':'#64748b'}}>
+                                {r.is_safe_to_send==='true'||r.is_safe_to_send==='1'?'✅':'—'}
+                              </td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                        {recipients.length>4&&<div style={{padding:'5px 10px',fontSize:12,color:muted}}>+{recipients.length-4} more</div>}
+                      </div>
                     </div>
                   )}
-                  <div style={{fontSize:13,color:muted,marginBottom:12}}>{selectedIds.size} contacts selected</div>
-                  <div style={{display:'flex',gap:10}}>
+                  <div style={{display:'flex',gap:10,marginTop:14}}>
                     <button style={{...btn,background:'#f1f5f9',color:'#475569'}} onClick={()=>setStep(1)}>← Back</button>
-                    <button style={btn} onClick={()=>{if(!selectedIds.size){setError('Select at least one contact');return;}setError('');setStep(3);}}>Next →</button>
+                    <button style={btn} onClick={()=>{if(!recipients.length){setError('Upload CSV first');return;}setError('');setStep(3);}}>Next →</button>
                   </div>
                 </div>
               )}
 
-              {/* STEP 3 — Compose */}
               {step===3&&(
                 <div>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
@@ -322,14 +323,14 @@ export default function App() {
                   <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:8}}>
                     {TAGS.map(t=><button key={t} onClick={()=>insertTag(t)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:`1px solid ${border}`,background:d?'#0f172a':'#f8fafc',color:muted,cursor:'pointer',fontFamily:'monospace'}}>{t}</button>)}
                   </div>
-                  <textarea ref={activeVariant===0?bodyRef:undefined} style={{...inp,height:180,resize:'vertical'}}
+                  <textarea ref={bodyRef} style={{...inp,height:180,resize:'vertical'}}
                     placeholder={`Hi {{first_name}},\n\nI came across {{business_name}} in {{city}}...`}
                     value={variants[activeVariant].body} onChange={e=>updateVariant(activeVariant,'body',e.target.value)}/>
-                  {selectedContacts.length>0&&variants[activeVariant].subject&&(
+                  {recipients.length>0&&variants[activeVariant].subject&&(
                     <div style={{background:d?'#0f172a':'#f8fafc',border:`1px solid ${border}`,borderRadius:10,padding:14,marginTop:10}}>
-                      <div style={{fontSize:11,fontWeight:700,color:muted,marginBottom:6,letterSpacing:1}}>PREVIEW — {selectedContacts[0].email}</div>
-                      <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>Subject: {preview(variants[activeVariant].subject,selectedContacts[0])}</div>
-                      <div style={{fontSize:13,color:muted,whiteSpace:'pre-wrap'}}>{preview(variants[activeVariant].body,selectedContacts[0])}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:muted,marginBottom:6,letterSpacing:1}}>PREVIEW — {recipients[0].email}</div>
+                      <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>Subject: {preview(variants[activeVariant].subject,recipients[0])}</div>
+                      <div style={{fontSize:13,color:muted,whiteSpace:'pre-wrap'}}>{preview(variants[activeVariant].body,recipients[0])}</div>
                     </div>
                   )}
                   <div style={{display:'flex',gap:10,marginTop:16}}>
@@ -339,21 +340,25 @@ export default function App() {
                 </div>
               )}
 
-              {/* STEP 4 — Schedule */}
               {step===4&&(
                 <div>
                   <h3 style={{fontWeight:700,fontSize:16,marginBottom:20}}>Schedule</h3>
-                  <div style={{marginBottom:16}}>
-                    <label style={lbl}>Send At (your local time)</label>
+                  <div style={{marginBottom:14}}>
+                    <label style={lbl}>Start Sending At (your local time)</label>
                     <input type="datetime-local" style={inp} value={scheduledAt} onChange={e=>setScheduledAt(e.target.value)}/>
                   </div>
-                  <div style={{marginBottom:16}}>
-                    <label style={lbl}>Send Window (IST) — emails only go out during this time each day</label>
+                  <div style={{marginBottom:14}}>
+                    <label style={lbl}>Daily Send Window (IST)</label>
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
                       <div><label style={{...lbl,fontWeight:400}}>Start</label><input type="time" style={inp} value={windowStart} onChange={e=>setWindowStart(e.target.value)}/></div>
                       <div><label style={{...lbl,fontWeight:400}}>End</label><input type="time" style={inp} value={windowEnd} onChange={e=>setWindowEnd(e.target.value)}/></div>
                     </div>
-                    <div style={{fontSize:12,color:muted,marginTop:4}}>Default 8pm–1am IST hits US morning inboxes. Overnight windows work automatically.</div>
+                    <div style={{fontSize:12,color:muted,marginTop:4}}>8pm–1am IST = US morning. Overnight windows work automatically.</div>
+                  </div>
+                  <div style={{marginBottom:14}}>
+                    <label style={lbl}>Emails Per Day — {dailyLimit}</label>
+                    <input type="range" min={10} max={200} step={10} style={{width:'100%',marginTop:4}} value={dailyLimit} onChange={e=>setDailyLimit(Number(e.target.value))}/>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:muted,marginTop:2}}><span>10</span><span>100</span><span>200</span></div>
                   </div>
                   <div style={{marginBottom:20}}>
                     <label style={lbl}>Delay Between Emails — {delaySeconds}s ({Math.floor(delaySeconds/60)}m {delaySeconds%60}s)</label>
@@ -362,9 +367,9 @@ export default function App() {
                   </div>
                   <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:14,marginBottom:20,fontSize:13}}>
                     <div style={{fontWeight:700,color:'#1d4ed8',marginBottom:6}}>Summary</div>
-                    <div style={{color:'#1e40af'}}>📧 {selectedIds.size} contacts{abEnabled?' (50/50 A/B)':''}</div>
-                    <div style={{color:'#1e40af'}}>⏱ ~{Math.round(selectedIds.size*delaySeconds/60)} min total send time</div>
-                    <div style={{color:'#1e40af'}}>🕗 Window: {windowStart}–{windowEnd} IST daily</div>
+                    <div style={{color:'#1e40af'}}>📧 {recipients.length} total · {dailyLimit}/day · ~{Math.ceil(recipients.length/dailyLimit)} days to complete</div>
+                    <div style={{color:'#1e40af'}}>⏱ ~{Math.round(dailyLimit*delaySeconds/60)} min per day</div>
+                    <div style={{color:'#1e40af'}}>🕗 Window: {windowStart}–{windowEnd} IST</div>
                     <div style={{color:'#1e40af'}}>📅 Starts: {scheduledAt?new Date(scheduledAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Not set'}</div>
                   </div>
                   <div style={{display:'flex',gap:10}}>
@@ -382,21 +387,22 @@ export default function App() {
           <div>
             <button onClick={()=>setView('list')} style={{background:'none',border:'none',color:muted,cursor:'pointer',fontSize:13,marginBottom:16}}>← Back</button>
             <h2 style={{fontSize:20,fontWeight:700,marginBottom:4}}>Follow Up: {fuCampaign.name}</h2>
-            <p style={{fontSize:13,color:muted,marginBottom:16}}>Uncheck anyone who replied. We'll only follow up with the rest.</p>
+            <p style={{fontSize:13,color:muted,marginBottom:16}}>Uncheck anyone who replied. We'll only follow up the rest.</p>
             <div style={{background:card,borderRadius:16,border:`1px solid ${border}`,padding:20,marginBottom:16}}>
               <div style={{display:'flex',gap:10,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
                 <input style={{...inp,flex:1,minWidth:160}} placeholder="Search..." value={fuSearch} onChange={e=>setFuSearch(e.target.value)}/>
-                <span style={{fontSize:13,color:muted,whiteSpace:'nowrap'}}>{fuRecs.filter(r=>r.selected).length}/{fuRecs.length} selected</span>
+                <span style={{fontSize:13,color:muted,whiteSpace:'nowrap'}}>{fuRecs.filter(r=>r.selected).length}/{fuRecs.length}</span>
                 <button onClick={()=>setFuRecs(r=>r.map(x=>({...x,selected:false})))} style={{...btn,background:'#f1f5f9',color:'#475569',padding:'7px 12px',fontSize:12}}>Deselect All</button>
                 <button onClick={()=>setFuRecs(r=>r.map(x=>({...x,selected:true})))} style={{...btn,padding:'7px 12px',fontSize:12}}>Select All</button>
               </div>
               <div style={{maxHeight:260,overflowY:'auto',border:`1px solid ${border}`,borderRadius:8}}>
                 {fuRecs.filter(r=>r.email.includes(fuSearch)||r.name.toLowerCase().includes(fuSearch.toLowerCase())).map(r=>(
                   <div key={r.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderBottom:`1px solid ${border}`,
-                    background:r.selected?card:d?'#2d1515':'#fff5f5',cursor:'pointer'}} onClick={()=>setFuRecs(prev=>prev.map(x=>x.id===r.id?{...x,selected:!x.selected}:x))}>
+                    background:r.selected?card:d?'#2d1515':'#fff5f5',cursor:'pointer'}}
+                    onClick={()=>setFuRecs(prev=>prev.map(x=>x.id===r.id?{...x,selected:!x.selected}:x))}>
                     <input type="checkbox" checked={r.selected} onChange={()=>{}} onClick={e=>e.stopPropagation()}/>
                     <div><div style={{fontSize:13}}>{r.email}</div>{r.name&&<div style={{fontSize:11,color:muted}}>{r.name}</div>}</div>
-                    {!r.selected&&<span style={{marginLeft:'auto',fontSize:11,color:'#ef4444'}}>excluded (replied)</span>}
+                    {!r.selected&&<span style={{marginLeft:'auto',fontSize:11,color:'#ef4444'}}>excluded</span>}
                   </div>
                 ))}
               </div>
@@ -413,7 +419,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TEST EMAIL */}
+        {/* TEST */}
         {view==='test'&&(
           <div style={{background:card,borderRadius:16,border:`1px solid ${border}`,padding:28,maxWidth:520}}>
             <h3 style={{fontWeight:700,fontSize:16,marginBottom:20}}>Quick Test Email</h3>
@@ -425,18 +431,6 @@ export default function App() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// Manual paste sub-component
-function ManualPaste({onSave,inp,btn,muted}:{onSave:(t:string)=>void,inp:React.CSSProperties,btn:React.CSSProperties,muted:string}) {
-  const [text,setText]=useState('');
-  return (
-    <div>
-      <textarea style={{...inp,height:80,resize:'vertical',fontFamily:'monospace',fontSize:12}} placeholder={"John Doe <john@acme.com>\njane@startup.io"} value={text} onChange={e=>setText(e.target.value)}/>
-      <div style={{fontSize:11,color:muted,marginTop:4,marginBottom:8}}>{text.split('\n').filter(Boolean).length} emails detected</div>
-      <button style={{...btn,padding:'7px 16px',fontSize:13}} onClick={()=>{onSave(text);setText('');}}>Save Contacts</button>
     </div>
   );
 }
