@@ -16,7 +16,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const { name, subject, body, from_name, scheduled_at, recipients, delay_seconds, notes, parent_campaign_id, action } = await req.json();
+  const { name, subject, body, from_name, scheduled_at, recipients, delay_seconds, notes, parent_campaign_id, action, window_start, window_end, contact_ids, total_count } = await req.json();
 
   // Duplicate action
   if (action === 'duplicate' && parent_campaign_id) {
@@ -38,14 +38,26 @@ export async function POST(req: Request) {
 
   const { data: campaign, error: campErr } = await supabase
     .from('campaigns')
-    .insert({ name, subject, body, from_name, scheduled_at, delay_seconds: delay_seconds || 60, notes: notes || '', parent_campaign_id: parent_campaign_id || null })
+    .insert({ name, subject, body, from_name, scheduled_at, delay_seconds: delay_seconds || 60,
+      notes: notes || '', parent_campaign_id: parent_campaign_id || null,
+      window_start: window_start || '20:00', window_end: window_end || '01:00',
+      total_count: recipients.length, sent_count: 0 })
     .select().single();
   if (campErr) return NextResponse.json({ error: campErr.message }, { status: 500 });
 
   const { error: recErr } = await supabase.from('recipients').insert(
-    recipients.map((r: any) => ({ campaign_id: campaign.id, email: r.email, name: r.name || '', subject_override: r.subject_override || null, body_override: r.body_override || null, metadata: r.metadata || null }))
+    recipients.map((r: any) => ({ campaign_id: campaign.id, email: r.email, name: r.name || '',
+      subject_override: r.subject_override || null, body_override: r.body_override || null, metadata: r.metadata || null }))
   );
   if (recErr) return NextResponse.json({ error: recErr.message }, { status: 500 });
+
+  // Mark contacts as used in this campaign
+  if (contact_ids?.length) {
+    await supabase.from('contact_campaign_map').insert(
+      contact_ids.map((cid: string) => ({ contact_id: cid, campaign_id: campaign.id }))
+    );
+  }
+
   return NextResponse.json({ success: true, campaign });
 }
 
