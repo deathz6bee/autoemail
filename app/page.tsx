@@ -1,13 +1,13 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
 
-type Recipient = { email: string; first_name?: string; business_name?: string; phone?: string; city?: string; state?: string; overall_score?: string; is_safe_to_send?: string; [key: string]: string | undefined };
+type Recipient = { email: string; name?: string; first_name?: string; business_name?: string; phone?: string; city?: string; state?: string; overall_score?: string; is_safe_to_send?: string; website?: string; rating?: string; [key: string]: string | undefined };
 type Variant = { subject: string; body: string };
 type Campaign = { id: string; name: string; subject: string; status: string; scheduled_at: string; notes?: string; sent_count?: number; total_count?: number; recipients: { count: number }[] };
 type FollowUpRec = { id: string; email: string; name: string; selected: boolean };
 type View = 'list'|'create'|'test'|'followup';
 
-const TAGS = ['{{first_name}}','{{business_name}}','{{company}}','{{city}}','{{state}}','{{email}}'];
+const TAGS = ['{{first_name}}','{{name}}','{{company}}','{{city}}','{{state}}','{{email}}','{{phone}}','{{website}}','{{rating}}'];
 
 export default function App() {
   const [dark, setDark] = useState(false);
@@ -89,12 +89,16 @@ export default function App() {
   const preview = (text: string, r?: Recipient) => {
     if (!r) return text;
     return text
-      .replace(/{{first_name}}/gi, r.first_name||r.business_name?.split(' ')[0]||'there')
-      .replace(/{{business_name}}/gi, r.business_name||'')
-      .replace(/{{company}}/gi, r.business_name||'')
+      .replace(/{{first_name}}/gi, r.first_name||(r.name||r.business_name||'there').split(' ')[0])
+      .replace(/{{name}}/gi, r.name||r.business_name||'')
+      .replace(/{{business_name}}/gi, r.business_name||r.name||'')
+      .replace(/{{company}}/gi, r.name||r.business_name||'')
       .replace(/{{city}}/gi, r.city||'')
       .replace(/{{state}}/gi, r.state||'')
-      .replace(/{{email}}/gi, r.email||'');
+      .replace(/{{email}}/gi, r.email||'')
+      .replace(/{{phone}}/gi, r.phone||'')
+      .replace(/{{website}}/gi, r.website||'')
+      .replace(/{{rating}}/gi, r.rating||'');
   };
 
   const handleSubmit = async () => {
@@ -104,7 +108,7 @@ export default function App() {
     if (!variants[0].subject||!variants[0].body) { setError('Fill subject and body'); return; }
     const recs = recipients.map((r,i) => {
       const isB = abEnabled && variants[1].subject && i >= Math.floor(recipients.length/2);
-      return { email:r.email, name:r.first_name||r.business_name||'',
+      return { email:r.email, name:r.first_name||r.name||r.business_name||'',
         subject_override: isB?variants[1].subject:null,
         body_override: isB?variants[1].body:null, metadata:JSON.stringify(r) };
     });
@@ -252,7 +256,7 @@ export default function App() {
               {step===2&&(
                 <div>
                   <h3 style={{fontWeight:700,fontSize:16,marginBottom:8}}>Upload Recipients CSV</h3>
-                  <p style={{fontSize:13,color:muted,marginBottom:12}}>Columns: <code>email, first_name, business_name, city, state, is_safe_to_send</code></p>
+                  <p style={{fontSize:13,color:muted,marginBottom:12}}>Columns: <code>email, name, first_name, city, state, phone, website, rating, is_safe_to_send</code></p>
                   <label style={{display:'flex',alignItems:'center',gap:6,marginBottom:12,cursor:'pointer',fontSize:13}}>
                     <input type="checkbox" checked={safeFilter} onChange={e=>setSafeFilter(e.target.checked)}/>
                     <span style={{color:muted}}>Auto-remove unsafe (<code>is_safe_to_send = false</code>)</span>
@@ -276,7 +280,7 @@ export default function App() {
                           <tbody>{recipients.slice(0,4).map((r,i)=>(
                             <tr key={i} style={{borderTop:`1px solid ${border}`}}>
                               <td style={{padding:'6px 10px'}}>{r.email}</td>
-                              <td style={{padding:'6px 10px',color:muted}}>{r.first_name||r.business_name||'-'}</td>
+                              <td style={{padding:'6px 10px',color:muted}}>{r.first_name||r.name||r.business_name||'-'}</td>
                               <td style={{padding:'6px 10px',color:muted}}>{r.city||'-'}</td>
                               <td style={{padding:'6px 10px',color:r.is_safe_to_send==='true'||r.is_safe_to_send==='1'?'#22c55e':'#64748b'}}>
                                 {r.is_safe_to_send==='true'||r.is_safe_to_send==='1'?'✅':'—'}
@@ -317,14 +321,14 @@ export default function App() {
                   </div>
                   <div style={{marginBottom:12}}>
                     <label style={lbl}>Subject</label>
-                    <input style={inp} placeholder="Quick question for {{business_name}}" value={variants[activeVariant].subject} onChange={e=>updateVariant(activeVariant,'subject',e.target.value)}/>
+                    <input style={inp} placeholder="Quick question for {{name}}" value={variants[activeVariant].subject} onChange={e=>updateVariant(activeVariant,'subject',e.target.value)}/>
                   </div>
                   <label style={lbl}>Tags — click to insert</label>
                   <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:8}}>
                     {TAGS.map(t=><button key={t} onClick={()=>insertTag(t)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:`1px solid ${border}`,background:d?'#0f172a':'#f8fafc',color:muted,cursor:'pointer',fontFamily:'monospace'}}>{t}</button>)}
                   </div>
                   <textarea ref={bodyRef} style={{...inp,height:180,resize:'vertical'}}
-                    placeholder={`Hi {{first_name}},\n\nI came across {{business_name}} in {{city}}...`}
+                    placeholder={`Hi {{first_name}},\n\nI came across {{name}} in {{city}}...`}
                     value={variants[activeVariant].body} onChange={e=>updateVariant(activeVariant,'body',e.target.value)}/>
                   {recipients.length>0&&variants[activeVariant].subject&&(
                     <div style={{background:d?'#0f172a':'#f8fafc',border:`1px solid ${border}`,borderRadius:10,padding:14,marginTop:10}}>
