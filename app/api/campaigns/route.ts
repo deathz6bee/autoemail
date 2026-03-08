@@ -24,11 +24,26 @@ export async function POST(req: Request) {
     const { data: srcRecs } = await supabase.from('recipients').select('*').eq('campaign_id', parent_campaign_id);
     if (!src) return NextResponse.json({ error: 'Source not found' }, { status: 404 });
     const { data: camp } = await supabase.from('campaigns')
-      .insert({ ...src, id: undefined, name: src.name + ' (copy)', status: 'scheduled', created_at: undefined, notes: src.notes })
+      .insert({
+        ...src,
+        id: undefined,
+        name: name || src.name + ' (copy)',
+        subject: subject || src.subject,
+        body: body || src.body,
+        from_name: from_name || src.from_name,
+        scheduled_at: scheduled_at || src.scheduled_at,
+        status: 'scheduled',
+        sent_count: 0,
+        last_sent_at: null,
+        created_at: undefined,
+        notes: src.notes,
+      })
       .select().single();
     if (!camp) return NextResponse.json({ error: 'Duplicate failed' }, { status: 500 });
     if (srcRecs?.length) {
-      await supabase.from('recipients').insert(srcRecs.map(r => ({ ...r, id: undefined, campaign_id: camp.id, status: 'pending', sent_at: null, error: null })));
+      await supabase.from('recipients').insert(
+        srcRecs.map(r => ({ ...r, id: undefined, campaign_id: camp.id, status: 'pending', sent_at: null, error: null, retry_attempted: null }))
+      );
     }
     return NextResponse.json({ success: true, campaign: camp });
   }
@@ -61,4 +76,18 @@ export async function DELETE(req: Request) {
   const { error } = await supabase.from('campaigns').delete().eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ success: true });
+}
+
+export async function PATCH(req: Request) {
+  const { id, status, subject, body, from_name, scheduled_at } = await req.json();
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+  const updates: Record<string, any> = {};
+  if (status) updates.status = status;
+  if (subject) updates.subject = subject;
+  if (body) updates.body = body;
+  if (from_name) updates.from_name = from_name;
+  if (scheduled_at) updates.scheduled_at = scheduled_at;
+  const { error } = await supabase.from('campaigns').update(updates).eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }
