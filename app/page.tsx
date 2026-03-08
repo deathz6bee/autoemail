@@ -357,20 +357,37 @@ export default function App() {
                       <div><label style={{...lbl,fontWeight:400}}>Start</label><input type="time" style={inp} value={windowStart} onChange={e=>setWindowStart(e.target.value)}/></div>
                       <div><label style={{...lbl,fontWeight:400}}>End</label><input type="time" style={inp} value={windowEnd} onChange={e=>setWindowEnd(e.target.value)}/></div>
                     </div>
-                    <div style={{fontSize:12,color:muted,marginTop:4}}>8pm–1am IST = US morning. Overnight windows work automatically.</div>
+                    <div style={{fontSize:12,color:muted,marginTop:4}}>e.g. 8pm–1am IST = US daytime. Overnight windows work automatically.</div>
                   </div>
-                  <div style={{marginBottom:14}}>
-                    <label style={lbl}>Emails Per Day — {dailyLimit}</label>
-                    <input type="range" min={10} max={200} step={10} style={{width:'100%',marginTop:4}} value={dailyLimit} onChange={e=>setDailyLimit(Number(e.target.value))}/>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:muted,marginTop:2}}><span>10</span><span>100</span><span>200</span></div>
-                  </div>
-                  <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:14,marginBottom:20,fontSize:13}}>
-                    <div style={{fontWeight:700,color:'#1d4ed8',marginBottom:6}}>Summary</div>
-                    <div style={{color:'#1e40af'}}>📧 {recipients.length} total · 1 email every 5 min · ~{Math.ceil(recipients.length/dailyLimit)} days to complete</div>
-                    <div style={{color:'#1e40af'}}>⏱ ~{Math.round(dailyLimit*5/60)} min per day</div>
-                    <div style={{color:'#1e40af'}}>🕗 Window: {windowStart}–{windowEnd} IST</div>
-                    <div style={{color:'#1e40af'}}>📅 Starts: {scheduledAt?new Date(scheduledAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Not set'}</div>
-                  </div>
+                  {(()=>{
+                    const [sh,sm]=windowStart.split(':').map(Number);
+                    const [eh,em]=windowEnd.split(':').map(Number);
+                    const startMin=sh*60+sm, endMin=eh*60+em;
+                    const windowMins=endMin>startMin?endMin-startMin:(24*60-startMin)+endMin;
+                    const maxEmails=Math.floor(windowMins/5);
+                    const cappedLimit=Math.min(dailyLimit,maxEmails);
+                    const gap=Math.max(5,Math.floor(windowMins/cappedLimit));
+                    const daysToComplete=Math.ceil(recipients.length/cappedLimit);
+                    return <>
+                      <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#15803d',marginBottom:14}}>
+                        ✅ Your window is <strong>{windowMins} min</strong> — max <strong>{maxEmails} emails/day</strong> at 5 min cron spacing
+                      </div>
+                      <div style={{marginBottom:14}}>
+                        <label style={lbl}>Emails Per Day — {cappedLimit}{dailyLimit>maxEmails?' (capped at window max)':''}</label>
+                        <input type="range" min={5} max={maxEmails} step={5} style={{width:'100%',marginTop:4}} value={cappedLimit} onChange={e=>setDailyLimit(Number(e.target.value))}/>
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:muted,marginTop:2}}><span>5</span><span>{Math.floor(maxEmails/2)}</span><span>{maxEmails}</span></div>
+                        <div style={{fontSize:12,color:muted,marginTop:6}}>⏱ 1 email every <strong>{gap} min</strong> within your window</div>
+                      </div>
+                      <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:14,marginBottom:20,fontSize:13}}>
+                        <div style={{fontWeight:700,color:'#1d4ed8',marginBottom:6}}>Summary</div>
+                        <div style={{color:'#1e40af'}}>📧 {recipients.length} total recipients</div>
+                        <div style={{color:'#1e40af'}}>📨 {cappedLimit} emails/day · 1 every {gap} min</div>
+                        <div style={{color:'#1e40af'}}>📅 ~{daysToComplete} day{daysToComplete!==1?'s':''} to complete</div>
+                        <div style={{color:'#1e40af'}}>🕗 Window: {windowStart}–{windowEnd} IST ({windowMins} min)</div>
+                        <div style={{color:'#1e40af'}}>🚀 Starts: {scheduledAt?new Date(scheduledAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Not set'}</div>
+                      </div>
+                    </>;
+                  })()}
                   <div style={{display:'flex',gap:10}}>
                     <button style={{...btn,background:'#f1f5f9',color:'#475569'}} onClick={()=>setStep(3)}>← Back</button>
                     <button style={{...btn,background:submitting?'#94a3b8':'#16a34a'}} disabled={submitting} onClick={handleSubmit}>{submitting?'Scheduling...':'🚀 Schedule Campaign'}</button>

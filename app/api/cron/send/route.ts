@@ -36,10 +36,21 @@ function inWindow(windowStart: string, windowEnd: string): boolean {
   return istMinutes >= startMin && istMinutes <= endMin;
 }
 
+// Calculate required gap in minutes between emails based on window duration and daily limit
+function getRequiredGapMinutes(windowStart: string, windowEnd: string, dailyLimit: number): number {
+  const [sh, sm] = windowStart.split(':').map(Number);
+  const [eh, em] = windowEnd.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  // Handle overnight windows (e.g. 20:00–01:00)
+  const windowMinutes = endMin > startMin ? endMin - startMin : (24 * 60 - startMin) + endMin;
+  // Gap = window duration / daily limit, minimum 5 minutes (cron frequency)
+  return Math.max(5, Math.floor(windowMinutes / dailyLimit));
+}
+
 export async function GET() {
   const now = new Date();
 
-  // Find campaigns that are ready to send
   const { data: campaigns, error } = await supabase
     .from('campaigns')
     .select('*')
@@ -49,7 +60,7 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!campaigns?.length) return NextResponse.json({ message: 'No campaigns to send' });
 
-  // Find the first campaign inside its send window
+  // Find first campaign inside its send window
   const campaign = campaigns.find(c => {
     const isFollowUp = !!c.parent_campaign_id;
     if (isFollowUp) return true;
@@ -57,6 +68,22 @@ export async function GET() {
   });
 
   if (!campaign) return NextResponse.json({ message: 'All campaigns outside send window' });
+
+  // Check if enough time has passed since last email (smart spacing)
+  const isFollowUp = !!campaign.parent_campaign_id;
+  if (!isFollowUp) {
+    const requiredGapMin = getRequiredGapMinutes(
+      campaign.window_start || '20:00',
+      campaign.window_end || '01:00',
+      campaign.daily_limit || 40
+    );
+    if (campaign.last_sent_at) {
+      const minutesSinceLastSend = (now.getTime() - new Date(campaign.last_sent_at).getTime()) / 60000;
+      if (minutesSinceLastSend < requiredGapMin) {
+        return NextResponse.json({ message: `Waiting — next email in ${Math.ceil(requiredGapMin - minutesSinceLastSend)} min` });
+      }
+    }
+  }
 
   // Atomic lock — prevents double-send if cron fires twice
   const { data: locked } = await supabase
@@ -95,7 +122,6 @@ export async function GET() {
   }
 
   // Re-check window right before sending
-  const isFollowUp = !!campaign.parent_campaign_id;
   if (!isFollowUp && !inWindow(campaign.window_start || '20:00', campaign.window_end || '01:00')) {
     await supabase.from('campaigns').update({ status: 'in_progress' }).eq('id', campaign.id);
     return NextResponse.json({ message: 'Window closed, will resume next window' });
@@ -155,8 +181,9 @@ export async function GET() {
 
     const newStatus = (remaining ?? 0) > 0 ? 'in_progress' : 'done';
 
+    // Save last_sent_at so next cron run knows when we last sent
     await supabase.from('campaigns')
-      .update({ status: newStatus, sent_count: totalSent })
+      .update({ status: newStatus, sent_count: totalSent, last_sent_at: new Date().toISOString() })
       .eq('id', campaign.id);
 
     return NextResponse.json({ success: true, sent_to: recipient.email, status: newStatus, total_sent: totalSent });
