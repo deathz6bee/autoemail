@@ -28,7 +28,7 @@ export default function App() {
   const [activeVariant, setActiveVariant] = useState(0);
   const [abEnabled, setAbEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
-  const [delaySeconds, setDelaySeconds] = useState(60);
+  const [delaySeconds] = useState(5);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [testEmail, setTestEmail] = useState('');
@@ -364,15 +364,10 @@ export default function App() {
                     <input type="range" min={10} max={200} step={10} style={{width:'100%',marginTop:4}} value={dailyLimit} onChange={e=>setDailyLimit(Number(e.target.value))}/>
                     <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:muted,marginTop:2}}><span>10</span><span>100</span><span>200</span></div>
                   </div>
-                  <div style={{marginBottom:20}}>
-                    <label style={lbl}>Delay Between Emails — {delaySeconds}s ({Math.floor(delaySeconds/60)}m {delaySeconds%60}s)</label>
-                    <input type="range" min={60} max={300} step={10} style={{width:'100%',marginTop:4}} value={delaySeconds} onChange={e=>setDelaySeconds(Number(e.target.value))}/>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:muted,marginTop:2}}><span>1 min</span><span>2.5 min</span><span>5 min</span></div>
-                  </div>
                   <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:14,marginBottom:20,fontSize:13}}>
                     <div style={{fontWeight:700,color:'#1d4ed8',marginBottom:6}}>Summary</div>
-                    <div style={{color:'#1e40af'}}>📧 {recipients.length} total · {dailyLimit}/day · ~{Math.ceil(recipients.length/dailyLimit)} days to complete</div>
-                    <div style={{color:'#1e40af'}}>⏱ ~{Math.round(dailyLimit*delaySeconds/60)} min per day</div>
+                    <div style={{color:'#1e40af'}}>📧 {recipients.length} total · 1 email every 5 min · ~{Math.ceil(recipients.length/dailyLimit)} days to complete</div>
+                    <div style={{color:'#1e40af'}}>⏱ ~{Math.round(dailyLimit*5/60)} min per day</div>
                     <div style={{color:'#1e40af'}}>🕗 Window: {windowStart}–{windowEnd} IST</div>
                     <div style={{color:'#1e40af'}}>📅 Starts: {scheduledAt?new Date(scheduledAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Not set'}</div>
                   </div>
