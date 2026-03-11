@@ -390,7 +390,7 @@ export default function App() {
 
   return (
     <div style={{fontFamily:'"DM Sans",system-ui,sans-serif',minHeight:'100vh',
-      background:C.bgGrad,color:C.text,backgroundAttachment:'fixed'}}>
+      background:C.bgGrad,color:C.text}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -457,11 +457,11 @@ export default function App() {
             <button key={v} onClick={()=>{setView(v);setStep(1);setError('');}}
               className="nav-tab gbtn"
               style={{padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',
-                fontSize:13,fontWeight:500,transition:'all 0.15s',background:'transparent',
+                fontSize:13,fontWeight:500,transition:'all 0.15s',
                 color: view===v ? C.accent : C.muted,
                 background: view===v
                   ? d?'rgba(43,127,255,0.12)':'rgba(43,127,255,0.08)'
-                  : 'transparent' as any,
+                  : 'transparent',
                 boxShadow: view===v ? 'inset 0 0 0 1px rgba(43,127,255,0.2)' : undefined,
               } as React.CSSProperties}>
               {label}
