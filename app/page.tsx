@@ -68,6 +68,25 @@ export default function App() {
   const [dupFromName, setDupFromName] = useState('');
   const [dupScheduledAt, setDupScheduledAt] = useState('');
   const [dupSaving, setDupSaving] = useState(false);
+  // Feature state
+  const [tags, setTags] = useState<Record<string,string[]>>(()=>{try{return JSON.parse(localStorage.getItem('ae_tags')||'{}')}catch{return {}}});
+  const [archivedIds, setArchivedIds] = useState<string[]>(()=>{try{return JSON.parse(localStorage.getItem('ae_archived')||'[]')}catch{return []}});
+  const [showArchived, setShowArchived] = useState(false);
+  const [templates, setTemplates] = useState<{id:string;name:string;subject:string;body:string}[]>(()=>{try{return JSON.parse(localStorage.getItem('ae_templates')||'[]')}catch{return []}});
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [unsubList, setUnsubList] = useState<string[]>(()=>{try{return JSON.parse(localStorage.getItem('ae_unsub')||'[]')}catch{return []}});
+  const [showUnsub, setShowUnsub] = useState(false);
+  const [unsubInput, setUnsubInput] = useState('');
+  const [sentMap, setSentMap] = useState<Record<string,any[]>>({});
+  const [openSent, setOpenSent] = useState<string|null>(null);
+  const [recipSearch, setRecipSearch] = useState('');
+  const [showRecipSearch, setShowRecipSearch] = useState(false);
+  const [recipResults, setRecipResults] = useState<any[]>([]);
+  const [recipSearching, setRecipSearching] = useState(false);
+  const [undoQueue, setUndoQueue] = useState<{id:string;name:string;timer:any}|null>(null);
+  const [showHotkeys, setShowHotkeys] = useState(false);
+  const [tagInput, setTagInput] = useState<Record<string,string>>({});
+  const [draft, setDraft] = useState<any>(null);
   // QOL state
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -161,6 +180,106 @@ export default function App() {
     setToasts(t=>[...t,{id,msg,ok}]);
     setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3000);
   };
+
+  const saveTags = (t: Record<string,string[]>) => { setTags(t); localStorage.setItem('ae_tags',JSON.stringify(t)); };
+  const saveArchived = (a: string[]) => { setArchivedIds(a); localStorage.setItem('ae_archived',JSON.stringify(a)); };
+  const saveTemplates = (t: typeof templates) => { setTemplates(t); localStorage.setItem('ae_templates',JSON.stringify(t)); };
+  const saveUnsub = (u: string[]) => { setUnsubList(u); localStorage.setItem('ae_unsub',JSON.stringify(u)); };
+
+  const archiveCampaign = (id:string) => { saveArchived([...archivedIds,id]); toast('Campaign archived'); };
+  const unarchiveCampaign = (id:string) => { saveArchived(archivedIds.filter(x=>x!==id)); };
+
+  const addTag = (campaignId:string, tag:string) => {
+    if (!tag.trim()) return;
+    const t = {...tags, [campaignId]:[...(tags[campaignId]||[]).filter(x=>x!==tag.trim()), tag.trim()]};
+    saveTags(t); setTagInput(p=>({...p,[campaignId]:''}));
+  };
+  const removeTag = (campaignId:string, tag:string) => {
+    saveTags({...tags,[campaignId]:(tags[campaignId]||[]).filter(x=>x!==tag)});
+  };
+
+  const saveTemplate = () => {
+    if (!variants[activeVariant].subject||!variants[activeVariant].body) { toast('Fill subject and body first',false); return; }
+    const tname = prompt('Template name?'); if (!tname) return;
+    saveTemplates([...templates,{id:Date.now().toString(),name:tname,subject:variants[activeVariant].subject,body:variants[activeVariant].body}]);
+    toast('Template saved');
+  };
+  const loadTemplate = (t:{subject:string;body:string}) => {
+    updateVariant(activeVariant,'subject',t.subject);
+    updateVariant(activeVariant,'body',t.body);
+    setShowTemplates(false); toast('Template loaded');
+  };
+  const deleteTemplate = (id:string) => saveTemplates(templates.filter(t=>t.id!==id));
+
+  const fetchSent = async (campaignId:string) => {
+    if (openSent===campaignId) { setOpenSent(null); return; }
+    const res = await fetch(`/api/recipients?campaign_id=${campaignId}&status=sent`);
+    const data = await res.json(); setSentMap(prev=>({...prev,[campaignId]:data||[]}));
+    setOpenSent(campaignId);
+  };
+
+  const searchAllRecipients = async () => {
+    if (!recipSearch.trim()) return;
+    setRecipSearching(true);
+    const results: any[] = [];
+    for (const c of campaigns) {
+      const res = await fetch(`/api/recipients?campaign_id=${c.id}`);
+      const data = await res.json()||[];
+      data.filter((r:any)=>r.email.includes(recipSearch)||((r.name||'').toLowerCase().includes(recipSearch.toLowerCase())))
+        .forEach((r:any)=>results.push({...r,campaignName:c.name,campaignId:c.id}));
+    }
+    setRecipResults(results); setRecipSearching(false);
+  };
+
+  const exportSentCSV = async (c: Campaign) => {
+    const res = await fetch(`/api/recipients?campaign_id=${c.id}&status=sent`);
+    const data = await res.json()||[];
+    if (!data.length) { toast('No sent recipients yet',false); return; }
+    const rows = [['email','name','sent_at'],...data.map((r:any)=>[r.email,r.name||'',r.sent_at||''])];
+    const csv = rows.map(r=>r.join(',')).join('\n');
+    const a = document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download=`${c.name}_sent.csv`; a.click(); toast('CSV downloaded');
+  };
+
+  const saveDraftToStorage = () => {
+    const d2={name,fromName,notes,recipients,variants,scheduledAt,windowStart,windowEnd,dailyLimit,step};
+    localStorage.setItem('ae_draft',JSON.stringify(d2)); toast('Draft saved');
+  };
+  const loadDraftFromStorage = () => {
+    try {
+      const d2=JSON.parse(localStorage.getItem('ae_draft')||'null'); if(!d2)return;
+      setName(d2.name||''); setFromName(d2.fromName||''); setNotes(d2.notes||'');
+      setVariants(d2.variants||[{subject:'',body:''},{subject:'',body:''}]);
+      setScheduledAt(d2.scheduledAt||''); setWindowStart(d2.windowStart||'20:00');
+      setWindowEnd(d2.windowEnd||'01:00'); setDailyLimit(d2.dailyLimit||40);
+      setStep(d2.step||1); toast('Draft loaded');
+    } catch {}
+  };
+
+  const softDelete = (id:string, name2:string) => {
+    if (undoQueue) { clearTimeout(undoQueue.timer); fetch(`/api/campaigns?id=${undoQueue.id}`,{method:'DELETE'}); }
+    const timer = setTimeout(()=>{ fetch(`/api/campaigns?id=${id}`,{method:'DELETE'}); fetchCampaigns(); setUndoQueue(null); },5000);
+    setUndoQueue({id,name:name2,timer});
+    setCampaigns(p=>p.filter(c=>c.id!==id));
+    toast(`"${name2}" deleted — undo?`);
+  };
+  const undoDelete = () => {
+    if (!undoQueue) return;
+    clearTimeout(undoQueue.timer); setUndoQueue(null); fetchCampaigns(); toast('Deletion undone');
+  };
+
+  // Keyboard shortcuts
+  useEffect(()=>{
+    const handler = (e:KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement) return;
+      if (e.key==='n'||e.key==='N') { setView('create'); setStep(1); }
+      if (e.key==='Escape') goHome();
+      if (e.key==='/') { setView('list'); setTimeout(()=>document.querySelector<HTMLInputElement>('input[placeholder="Search campaigns…"]')?.focus(),50); e.preventDefault(); }
+      if (e.key==='?') setShowHotkeys(p=>!p);
+    };
+    window.addEventListener('keydown',handler);
+    return ()=>window.removeEventListener('keydown',handler);
+  },[]);
 
   const handleCSV = (file: File) => {
     setCsvError('');
@@ -283,10 +402,7 @@ export default function App() {
     setDupSaving(false); setDupSource(null); fetchCampaigns();
   };
 
-  const deleteCampaign = async (id:string) => {
-    if (!confirm('Delete this campaign?')) return;
-    await fetch(`/api/campaigns?id=${id}`,{method:'DELETE'}); fetchCampaigns();
-  };
+  const deleteCampaign = (id:string, cname:string) => softDelete(id, cname);
   const bulkDelete = async () => {
     if (!selectedIds.length||!confirm(`Delete ${selectedIds.length} campaigns?`)) return;
     await Promise.all(selectedIds.map(id=>fetch(`/api/campaigns?id=${id}`,{method:'DELETE'})));
@@ -501,9 +617,19 @@ export default function App() {
             {label:'Success Rate',   value:totalRecips>0?`${successRate}%`:'—', color:'#6ee7b7', glow:'rgba(16,185,129,0.2)'},
             {label:'Total Campaigns',value:String(campaigns.length),   color:C.muted2,  glow:'transparent'},
           ];
+          const totalFailed = campaigns.reduce((s,c)=>s+((c as any).failed_count||0),0);
+          const bounceRate = totalSent>0?Math.round((totalFailed/totalSent)*100):0;
+          const todaySent = campaigns.filter(c=>['in_progress','sending'].includes(c.status)).reduce((s,c)=>s+(c.sent_count||0),0);
+          const allStats = [
+            ...statItems,
+            {label:'Bounce Rate', value:totalSent>0?`${bounceRate}%`:'—', color:'#fca5a5', glow:'rgba(239,68,68,0.15)'},
+            {label:'Est. Today',  value:String(todaySent), color:'#c4b5fd', glow:'rgba(139,92,246,0.15)'},
+          ];
+          const _unused = [
+          ];
           return (
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:28}}>
-              {statItems.map(s=>(
+              {allStats.map(s=>(
                 <div key={s.label} style={{
                   ...glassCard, padding:'16px 18px',
                   boxShadow:`0 4px 20px rgba(0,0,0,${d?0.4:0.06}), inset 0 1px 0 rgba(255,255,255,${d?0.06:0.8})`,
@@ -525,6 +651,40 @@ export default function App() {
         {/* ── CAMPAIGN LIST ── */}
         {view==='list'&&(
           <div>
+            {/* RECIPIENT SEARCH */}
+            {showRecipSearch&&(
+              <div style={{...glassCard,padding:16,marginBottom:12}}>
+                <div style={{display:'flex',gap:8,marginBottom:10}}>
+                  <input value={recipSearch} onChange={e=>setRecipSearch(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&searchAllRecipients()}
+                    placeholder="Search by email or name across all campaigns…"
+                    style={{...inp,flex:1,padding:'7px 12px',fontSize:12}} autoFocus/>
+                  <button onClick={searchAllRecipients} style={btn} className="gbtn"
+                    disabled={recipSearching}>{recipSearching?'…':'Search'}</button>
+                </div>
+                {recipResults.length>0&&(
+                  <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',maxHeight:200,overflowY:'auto'}}>
+                    <table style={{width:'100%',fontSize:11,borderCollapse:'collapse'}}>
+                      <thead><tr style={{background:d?'rgba(0,0,0,0.4)':'rgba(0,0,0,0.04)'}}>
+                        {['Email','Name','Campaign','Status'].map(h=><th key={h} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:700,letterSpacing:'0.08em',color:C.muted,textTransform:'uppercase'}}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>{recipResults.map((r,i)=>(
+                        <tr key={i} style={{borderTop:`1px solid ${C.border}`}} className="grow">
+                          <td style={{padding:'7px 12px',fontFamily:'DM Mono,monospace'}}>{r.email}</td>
+                          <td style={{padding:'7px 12px',color:C.muted}}>{r.name||'—'}</td>
+                          <td style={{padding:'7px 12px',color:C.muted,fontSize:11}}>{r.campaignName}</td>
+                          <td style={{padding:'7px 12px'}}><StatusBadge status={r.status||'draft'}/></td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                )}
+                {recipResults.length===0&&recipSearch&&!recipSearching&&(
+                  <div style={{fontSize:12,color:C.muted,fontFamily:'DM Mono,monospace'}}>No results found.</div>
+                )}
+              </div>
+            )}
+
             {/* SEARCH + FILTER + SORT */}
             <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
               <input value={search} onChange={e=>setSearch(e.target.value)}
@@ -542,6 +702,25 @@ export default function App() {
                 <option value="name">Sort: Name</option>
                 <option value="sent">Sort: Sent</option>
               </select>
+              <button onClick={()=>setShowRecipSearch(p=>!p)} className="gbtn"
+                style={{...btnGhost,fontSize:11,padding:'6px 12px',
+                  color:showRecipSearch?C.accent:C.muted,
+                  borderColor:showRecipSearch?'rgba(43,127,255,0.4)':C.border2}}>
+                🔍 Recipients
+              </button>
+              <button onClick={()=>setShowArchived(p=>!p)} className="gbtn"
+                style={{...btnGhost,fontSize:11,padding:'6px 12px',
+                  color:showArchived?'#c4b5fd':C.muted,
+                  borderColor:showArchived?'rgba(139,92,246,0.4)':C.border2}}>
+                {showArchived?'Hide Archived':'Archived'}
+                {archivedIds.length>0&&<span style={{marginLeft:5,fontFamily:'DM Mono,monospace',fontSize:10,opacity:0.7}}>{archivedIds.length}</span>}
+              </button>
+              <button onClick={()=>setShowUnsub(p=>!p)} className="gbtn"
+                style={{...btnGhost,fontSize:11,padding:'6px 12px',
+                  color:showUnsub?'#fca5a5':C.muted,
+                  borderColor:showUnsub?'rgba(239,68,68,0.35)':C.border2}}>
+                Unsub {unsubList.length>0&&`(${unsubList.length})`}
+              </button>
               {selectedIds.length>0&&(
                 <button onClick={bulkDelete} className="gbtn"
                   style={{...btnGhost,fontSize:11,padding:'6px 12px',color:'#fca5a5',borderColor:'rgba(239,68,68,0.35)',background:'rgba(239,68,68,0.08)'}}>
@@ -558,6 +737,32 @@ export default function App() {
               </button>
             </div>
 
+            {/* UNSUB PANEL */}
+            {showUnsub&&(
+              <div style={{...glassCard,padding:16,marginBottom:12}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.1em',textTransform:'uppercase',color:'#fca5a5',marginBottom:10,fontFamily:'DM Mono,monospace'}}>GLOBAL UNSUBSCRIBE LIST</div>
+                <div style={{display:'flex',gap:8,marginBottom:10}}>
+                  <input value={unsubInput} onChange={e=>setUnsubInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter'&&unsubInput.trim()){saveUnsub([...unsubList,unsubInput.trim()]);setUnsubInput('');toast('Added to unsub list');}}}
+                    placeholder="email@example.com — press Enter to add"
+                    style={{...inp,flex:1,padding:'7px 12px',fontSize:12}}/>
+                </div>
+                {unsubList.length>0&&(
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {unsubList.map(e=>(
+                      <span key={e} style={{fontSize:11,padding:'3px 9px',borderRadius:5,
+                        background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.25)',
+                        color:'#fca5a5',fontFamily:'DM Mono,monospace',display:'flex',alignItems:'center',gap:5}}>
+                        {e}
+                        <span onClick={()=>saveUnsub(unsubList.filter(x=>x!==e))} style={{cursor:'pointer',opacity:0.6}}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {!unsubList.length&&<div style={{fontSize:12,color:C.muted,fontFamily:'DM Mono,monospace'}}>No emails blocked yet.</div>}
+              </div>
+            )}
+
             {campaigns.length===0&&(
               <div style={{...glassCard,padding:64,textAlign:'center'}}>
                 <div style={{fontSize:32,marginBottom:12,opacity:0.15,filter:'blur(0.5px)'}}>✉</div>
@@ -570,6 +775,7 @@ export default function App() {
 
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
               {campaigns
+                .filter(c=>showArchived?archivedIds.includes(c.id):!archivedIds.includes(c.id))
                 .filter(c=>(statusFilter==='all'||c.status===statusFilter)&&
                   (search===''||c.name.toLowerCase().includes(search.toLowerCase())||c.subject.toLowerCase().includes(search.toLowerCase())))
                 .sort((a,b)=>sortBy==='name'?a.name.localeCompare(b.name):
@@ -629,6 +835,22 @@ export default function App() {
                             </span>
                           </>}
                         </div>
+                        {/* TAGS */}
+                        <div style={{display:'flex',flexWrap:'wrap',gap:5,marginTop:8,alignItems:'center'}}>
+                          {(tags[c.id]||[]).map(tag=>(
+                            <span key={tag} style={{fontSize:10,padding:'2px 8px',borderRadius:4,
+                              background:'rgba(139,92,246,0.12)',border:'1px solid rgba(139,92,246,0.25)',
+                              color:'#c4b5fd',fontFamily:'DM Mono,monospace',display:'flex',alignItems:'center',gap:4}}>
+                              {tag}
+                              <span onClick={()=>removeTag(c.id,tag)} style={{cursor:'pointer',opacity:0.6,fontSize:11}}>×</span>
+                            </span>
+                          ))}
+                          <input value={tagInput[c.id]||''} onChange={e=>setTagInput(p=>({...p,[c.id]:e.target.value}))}
+                            onKeyDown={e=>e.key==='Enter'&&addTag(c.id,tagInput[c.id]||'')}
+                            placeholder="+ tag" style={{fontSize:10,padding:'2px 7px',borderRadius:4,
+                              border:`1px solid ${C.border}`,background:'transparent',color:C.muted,
+                              width:50,outline:'none',fontFamily:'DM Mono,monospace'}}/>
+                        </div>
                         <ProgressBar c={c}/>
                       </div>
 
@@ -678,7 +900,24 @@ export default function App() {
                           style={{...btnGhost,fontSize:11,padding:'5px 11px'}}>
                           Clone
                         </button>
-                        <button onClick={()=>deleteCampaign(c.id)} className="gbtn"
+                        <button onClick={()=>fetchSent(c.id)} className="gbtn"
+                          style={{...btnGhost,fontSize:11,padding:'5px 11px',
+                            color:openSent===c.id?'#93c5fd':C.muted,
+                            borderColor:openSent===c.id?'rgba(59,130,246,0.4)':C.border2,
+                            background:openSent===c.id?'rgba(59,130,246,0.08)':'transparent'}}>
+                          Sent
+                        </button>
+                        <button onClick={()=>exportSentCSV(c)} className="gbtn"
+                          style={{...btnGhost,fontSize:11,padding:'5px 11px'}}>
+                          ↓ CSV
+                        </button>
+                        {!archivedIds.includes(c.id)
+                          ?<button onClick={()=>archiveCampaign(c.id)} className="gbtn"
+                            style={{...btnGhost,fontSize:11,padding:'5px 11px'}}>Archive</button>
+                          :<button onClick={()=>unarchiveCampaign(c.id)} className="gbtn"
+                            style={{...btnGhost,fontSize:11,padding:'5px 11px',color:'#6ee7b7'}}>Unarchive</button>
+                        }
+                        <button onClick={()=>deleteCampaign(c.id, c.name)} className="gbtn"
                           style={{background:'none',border:'none',cursor:'pointer',
                             fontSize:20,color:C.muted,padding:'3px 6px',
                             lineHeight:1,opacity:0.4,transition:'opacity 0.15s'}}>
@@ -720,6 +959,30 @@ export default function App() {
                         <button style={{...btn,background:dupSaving?'rgba(255,255,255,0.1)':`linear-gradient(135deg,${C.cyan},#0284c7)`,boxShadow:`0 2px 12px rgba(14,165,233,0.3)`,padding:'8px 18px',fontSize:12}} disabled={dupSaving} onClick={saveDuplicate} className="gbtn">{dupSaving?'Creating…':'Create Clone'}</button>
                         <button style={{...btnGhost,padding:'8px 14px',fontSize:12}} onClick={()=>setDupSource(null)} className="gbtn">Cancel</button>
                       </div>
+                    </Panel>
+                  )}
+
+                  {/* SENT PANEL */}
+                  {openSent===c.id&&(
+                    <Panel title={`Sent Recipients${sentMap[c.id]?.length?` · ${sentMap[c.id].length}`:''}`}
+                      accent={C.accent} tint={d?'rgba(43,127,255,0.04)':'rgba(43,127,255,0.02)'}>
+                      {!sentMap[c.id]?.length
+                        ?<div style={{fontSize:12,color:C.muted,fontFamily:'DM Mono,monospace'}}>No sent recipients yet.</div>
+                        :<div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',maxHeight:200,overflowY:'auto'}}>
+                          <table style={{width:'100%',fontSize:11,borderCollapse:'collapse'}}>
+                            <thead><tr style={{background:d?'rgba(0,0,0,0.4)':'rgba(0,0,0,0.04)'}}>
+                              {['Email','Name','Sent At'].map(h=><th key={h} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:C.muted}}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>{sentMap[c.id].map((r:any,i:number)=>(
+                              <tr key={i} style={{borderTop:`1px solid ${C.border}`}} className="grow">
+                                <td style={{padding:'7px 12px',fontFamily:'DM Mono,monospace',fontSize:11}}>{r.email}</td>
+                                <td style={{padding:'7px 12px',color:C.muted}}>{r.name||'—'}</td>
+                                <td style={{padding:'7px 12px',color:C.muted,fontFamily:'DM Mono,monospace',fontSize:10}}>{r.sent_at?new Date(r.sent_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                        </div>
+                      }
                     </Panel>
                   )}
 
@@ -913,6 +1176,39 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                  {/* TEMPLATE PANEL */}
+                  <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+                    <button onClick={()=>setShowTemplates(p=>!p)} className="gbtn"
+                      style={{...btnGhost,fontSize:11,padding:'5px 12px',
+                        color:showTemplates?C.accent:C.muted}}>
+                      📄 Templates {templates.length>0&&`(${templates.length})`}
+                    </button>
+                    <button onClick={saveTemplate} className="gbtn"
+                      style={{...btnGhost,fontSize:11,padding:'5px 12px'}}>Save as Template</button>
+                    <button onClick={saveDraftToStorage} className="gbtn"
+                      style={{...btnGhost,fontSize:11,padding:'5px 12px'}}>💾 Save Draft</button>
+                    <button onClick={loadDraftFromStorage} className="gbtn"
+                      style={{...btnGhost,fontSize:11,padding:'5px 12px',color:'#fcd34d',borderColor:'rgba(245,158,11,0.3)'}}>Load Draft</button>
+                  </div>
+                  {showTemplates&&templates.length>0&&(
+                    <div style={{...glassCard,padding:12,marginBottom:14}}>
+                      {templates.map(t=>(
+                        <div key={t.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+                          padding:'8px 10px',borderBottom:`1px solid ${C.border}`,gap:8}}>
+                          <div>
+                            <div style={{fontSize:12,fontWeight:600,color:C.text}}>{t.name}</div>
+                            <div style={{fontSize:11,color:C.muted,fontFamily:'DM Mono,monospace',marginTop:2,opacity:0.8}}>{t.subject.slice(0,50)}</div>
+                          </div>
+                          <div style={{display:'flex',gap:6}}>
+                            <button onClick={()=>loadTemplate(t)} className="gbtn"
+                              style={{...btn,fontSize:10,padding:'4px 10px'}}>Load</button>
+                            <button onClick={()=>deleteTemplate(t.id)} className="gbtn"
+                              style={{...btnGhost,fontSize:10,padding:'4px 8px',color:'#fca5a5'}}>×</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {abEnabled&&(
                     <div style={{display:'flex',gap:6,marginBottom:16}}>
                       {[0,1].map(i=>(
@@ -953,6 +1249,9 @@ export default function App() {
                         </button>
                       ))}
                     </div>
+                  </div>
+                  <div style={{fontSize:10,color:C.muted,fontFamily:'DM Mono,monospace',marginBottom:6,opacity:0.75}}>
+                    Spintax: <span style={{color:'#c4b5fd'}}>{"{Hi|Hello|Hey}"} {"{{first_name}}"}</span> — randomizes per recipient
                   </div>
                   <textarea ref={bodyRef} style={{...inp,height:188,resize:'vertical',marginTop:10,marginBottom:14}}
                     placeholder={'Hi {{first_name}},\n\nI came across {{name}} in {{city}}...'}
@@ -1171,6 +1470,43 @@ export default function App() {
           </div>
         )}
       </div>
+      {/* WORD COUNT hint for body — inject via existing char count area already done for subject */}
+
+      {/* HOTKEYS MODAL */}
+      {showHotkeys&&(
+        <div onClick={()=>setShowHotkeys(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',
+          backdropFilter:'blur(8px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200}}>
+          <div onClick={e=>e.stopPropagation()} style={{...glassCard,padding:28,minWidth:300,maxWidth:400}}>
+            <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.1em',textTransform:'uppercase',
+              color:C.muted,marginBottom:16,fontFamily:'DM Mono,monospace'}}>KEYBOARD SHORTCUTS</div>
+            {[['N','New campaign'],['Esc','Back to list'],['/','Focus search'],['?','Toggle this panel']].map(([k,v])=>(
+              <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',
+                borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+                <span style={{fontFamily:'DM Mono,monospace',background:d?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.07)',
+                  padding:'2px 8px',borderRadius:5,fontSize:11,color:C.text}}>{k}</span>
+                <span style={{color:C.muted}}>{v}</span>
+              </div>
+            ))}
+            <button onClick={()=>setShowHotkeys(false)} className="gbtn"
+              style={{...btnGhost,marginTop:16,width:'100%',textAlign:'center'}}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* UNDO BANNER */}
+      {undoQueue&&(
+        <div style={{position:'fixed',bottom:80,left:'50%',transform:'translateX(-50%)',
+          background:d?'rgba(10,16,32,0.95)':'rgba(255,255,255,0.97)',
+          border:`1px solid ${C.border2}`,borderRadius:12,padding:'10px 20px',
+          display:'flex',alignItems:'center',gap:14,zIndex:200,
+          boxShadow:'0 8px 32px rgba(0,0,0,0.3)',backdropFilter:'blur(20px)'}}>
+          <span style={{fontSize:13,color:C.text}}>"{undoQueue.name}" deleted</span>
+          <button onClick={undoDelete} className="gbtn"
+            style={{...btn,padding:'5px 14px',fontSize:12,background:'linear-gradient(135deg,#f59e0b,#d97706)',
+              boxShadow:'0 2px 10px rgba(245,158,11,0.3)'}}>Undo</button>
+        </div>
+      )}
+
       {/* TOASTS */}
       <div style={{position:'fixed',bottom:24,right:24,display:'flex',flexDirection:'column',gap:8,zIndex:999,pointerEvents:'none'}}>
         {toasts.map(t=>(
