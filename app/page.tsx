@@ -263,20 +263,97 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let cur = '', inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuote = !inQuote; }
+      else if (ch === ',' && !inQuote) { result.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    result.push(cur.trim());
+    return result;
+  };
+
+  const extractCityState = (address: string): { city: string; state: string } => {
+    if (!address.trim()) return { city: '', state: '' };
+    const parts = address.split(',').map(p => p.trim());
+    if (parts.length >= 4) {
+      const city = parts[parts.length - 3];
+      const stateZip = parts[parts.length - 2];
+      const state = stateZip.split(' ')[0];
+      return { city, state };
+    }
+    if (parts.length === 3) {
+      const stateZip = parts[parts.length - 1];
+      const state = stateZip.split(' ')[0];
+      return { city: parts[parts.length - 2], state };
+    }
+    return { city: '', state: '' };
+  };
+
   const handleCSV = (file: File) => {
     setCsvError('');
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text = e.target?.result as string;
+      const text = (e.target?.result as string).replace(/^\uFEFF/, ''); // strip BOM
       const lines = text.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
-      if (!headers.includes('email')) { setCsvError('CSV must have an "email" column'); return; }
+      const rawHeaders = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/"/g, '').trim());
+
+      // Detect scraper format — has 'address' and 'name' but no 'first_name'
+      const isScraperFormat = rawHeaders.includes('address') && rawHeaders.includes('name') && !rawHeaders.includes('first_name') && (rawHeaders.includes('email id') || rawHeaders.includes('email'));
+
+      if (isScraperFormat) {
+        // Convert scraper format → app format
+        const seen = new Set<string>();
+        const all: Recipient[] = [];
+        for (const line of lines.slice(1)) {
+          if (!line.trim()) continue;
+          const vals = parseCSVLine(line);
+          const row: Record<string, string> = {};
+          rawHeaders.forEach((h, i) => { row[h] = (vals[i] || '').replace(/"/g, '').trim(); });
+
+          const email = (row['email'] || row['email id'] || '').toLowerCase().trim();
+          if (!email || seen.has(email)) continue;
+          seen.add(email);
+
+          const { city, state } = extractCityState(row['address'] || '');
+          const name = row['name'] || '';
+          const firstName = name.split(' ')[0] || '';
+
+          all.push({
+            email,
+            name,
+            first_name: firstName,
+            city,
+            state,
+            phone: row['mobile number'] || row['phone'] || '',
+            website: row['website'] || '',
+            rating: row['rating'] || '',
+            is_safe_to_send: row['is_safe_to_send'] || 'true',
+            overall_score: row['overall_score'] || '',
+          });
+        }
+        const safe = all.filter(r => !safeFilter || !r.is_safe_to_send || r.is_safe_to_send === 'true' || r.is_safe_to_send === '1');
+        setFilteredCount(all.length - safe.length);
+        setRecipients(safe);
+        return;
+      }
+
+      // Standard app format
+      if (!rawHeaders.includes('email')) { setCsvError('CSV must have an "email" column'); return; }
+      const seen = new Set<string>();
       const all = lines.slice(1).map(line => {
-        const vals = line.split(',').map(v => v.trim().replace(/"/g, ''));
+        const vals = parseCSVLine(line);
         const obj: Recipient = { email: '' };
-        headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+        rawHeaders.forEach((h, i) => { obj[h] = (vals[i] || '').replace(/"/g, ''); });
         return obj;
-      }).filter(r => r.email);
+      }).filter(r => {
+        const email = r.email.toLowerCase().trim();
+        if (!email || seen.has(email)) return false;
+        seen.add(email); return true;
+      });
       const safe = all.filter(r => !safeFilter || !r.is_safe_to_send || r.is_safe_to_send === 'true' || r.is_safe_to_send === '1');
       setFilteredCount(all.length - safe.length);
       setRecipients(safe);
@@ -290,16 +367,16 @@ export default function App() {
   const preview = (text: string, r?: Recipient) => {
     if (!r) return text;
     return text
-      .replace(/{{first_name}}/gi, r.first_name || (r.name || r.business_name || 'there').split(' ')[0])
-      .replace(/{{name}}/gi, r.name || r.business_name || '')
-      .replace(/{{business_name}}/gi, r.business_name || r.name || '')
-      .replace(/{{company}}/gi, r.name || r.business_name || '')
-      .replace(/{{city}}/gi, r.city || '')
-      .replace(/{{state}}/gi, r.state || '')
+      .replace(/{{first_name}}/gi, r.first_name || (r.name || r.business_name || 'there').split(' ')[0] || 'there')
+      .replace(/{{name}}/gi, r.name || r.business_name || 'your business')
+      .replace(/{{business_name}}/gi, r.business_name || r.name || 'your business')
+      .replace(/{{company}}/gi, r.name || r.business_name || 'your business')
+      .replace(/{{city}}/gi, r.city || 'your city')
+      .replace(/{{state}}/gi, r.state || 'your state')
       .replace(/{{email}}/gi, r.email || '')
       .replace(/{{phone}}/gi, r.phone || '')
       .replace(/{{website}}/gi, r.website || '')
-      .replace(/{{rating}}/gi, r.rating || '');
+      .replace(/{{rating}}/gi, r.rating || 'highly rated');
   };
 
   const addSenderAccount = async () => {

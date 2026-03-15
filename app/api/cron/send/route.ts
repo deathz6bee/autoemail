@@ -11,7 +11,6 @@ const supabase = createClient(
 const transporterCache: Record<string, nodemailer.Transporter> = {};
 
 async function getTransporter(senderEmail: string | null): Promise<nodemailer.Transporter | null> {
-  // If no sender_email on recipient, try env vars first, then first active DB account
   if (!senderEmail) {
     if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD && process.env.GMAIL_USER !== 'placeholder@gmail.com') {
       const key = process.env.GMAIL_USER;
@@ -23,7 +22,6 @@ async function getTransporter(senderEmail: string | null): Promise<nodemailer.Tr
       }
       return transporterCache[key];
     }
-    // No env vars — try first active sender account in DB
     const { data: fallbackAccount } = await supabase
       .from('sender_accounts')
       .select('email, app_password')
@@ -31,7 +29,7 @@ async function getTransporter(senderEmail: string | null): Promise<nodemailer.Tr
       .order('created_at', { ascending: true })
       .limit(1)
       .single();
-    if (!fallbackAccount) return null; // No account anywhere
+    if (!fallbackAccount) return null;
     if (!transporterCache[fallbackAccount.email]) {
       transporterCache[fallbackAccount.email] = nodemailer.createTransport({
         host: 'smtp.gmail.com', port: 587, secure: false,
@@ -41,7 +39,6 @@ async function getTransporter(senderEmail: string | null): Promise<nodemailer.Tr
     return transporterCache[fallbackAccount.email];
   }
 
-  // Look up the specific account from Supabase
   if (!transporterCache[senderEmail]) {
     const { data: account } = await supabase
       .from('sender_accounts')
@@ -50,10 +47,7 @@ async function getTransporter(senderEmail: string | null): Promise<nodemailer.Tr
       .eq('is_active', true)
       .single();
 
-    if (!account) {
-      // Account not found or disabled — fall back to default
-      return getTransporter(null);
-    }
+    if (!account) return getTransporter(null);
 
     transporterCache[senderEmail] = nodemailer.createTransport({
       host: 'smtp.gmail.com', port: 587, secure: false,
@@ -109,7 +103,6 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!campaigns?.length) return NextResponse.json({ message: 'No campaigns to send' });
 
-  // Find first campaign inside its send window
   const campaign = campaigns.find(c => {
     const isFollowUp = !!c.parent_campaign_id;
     if (isFollowUp) return true;
@@ -118,7 +111,6 @@ export async function GET() {
 
   if (!campaign) return NextResponse.json({ message: 'All campaigns outside send window' });
 
-  // Smart spacing — check if enough time has passed since last send
   const isFollowUp = !!campaign.parent_campaign_id;
   if (!isFollowUp) {
     const requiredGapMin = getRequiredGapMinutes(
@@ -134,7 +126,6 @@ export async function GET() {
     }
   }
 
-  // Atomic lock
   const { data: locked } = await supabase
     .from('campaigns')
     .update({ status: 'sending' })
@@ -145,7 +136,6 @@ export async function GET() {
 
   if (!locked) return NextResponse.json({ message: 'Campaign already being processed' });
 
-  // Get next pending recipient
   const { data: pendingRecs } = await supabase
     .from('recipients')
     .select('*')
@@ -153,7 +143,6 @@ export async function GET() {
     .eq('status', 'pending')
     .limit(1);
 
-  // Retry one failed recipient if no pending
   const { data: failedRecs } = !pendingRecs?.length ? await supabase
     .from('recipients')
     .select('*')
@@ -164,19 +153,16 @@ export async function GET() {
 
   const recipient = pendingRecs?.[0] ?? failedRecs?.[0];
 
-  // No recipients left
   if (!recipient) {
     await supabase.from('campaigns').update({ status: 'done' }).eq('id', campaign.id);
     return NextResponse.json({ message: 'Campaign complete, marked done' });
   }
 
-  // Re-check window
   if (!isFollowUp && !inWindow(campaign.window_start || '20:00', campaign.window_end || '01:00')) {
     await supabase.from('campaigns').update({ status: 'in_progress' }).eq('id', campaign.id);
     return NextResponse.json({ message: 'Window closed, will resume next window' });
   }
 
-  // Skip invalid email
   if (!isValidEmail(recipient.email)) {
     await supabase.from('recipients')
       .update({ status: 'failed', error: 'Invalid email format' })
@@ -185,21 +171,21 @@ export async function GET() {
     return NextResponse.json({ message: `Skipped invalid email: ${recipient.email}` });
   }
 
-  // Parse metadata
   let meta: Record<string, string> = {};
   try { meta = recipient.metadata ? JSON.parse(recipient.metadata) : {}; } catch { meta = {}; }
 
+  // ── PERSONALIZE with smart fallbacks for missing values ──────────────
   const personalize = (text: string) => text
-    .replace(/{{name}}/gi, meta.name || meta.business_name || recipient.name || '')
-    .replace(/{{first_name}}/gi, meta.first_name || (meta.name || meta.business_name || recipient.name || 'there').split(' ')[0])
-    .replace(/{{business_name}}/gi, meta.business_name || meta.name || recipient.name || '')
-    .replace(/{{company}}/gi, meta.company || meta.name || meta.business_name || recipient.name || '')
-    .replace(/{{city}}/gi, meta.city || '')
-    .replace(/{{state}}/gi, meta.state || '')
-    .replace(/{{email}}/gi, recipient.email)
-    .replace(/{{phone}}/gi, meta.phone || '')
-    .replace(/{{website}}/gi, meta.website || '')
-    .replace(/{{rating}}/gi, meta.rating || '');
+    .replace(/{{name}}/gi,          meta.name          || meta.business_name || recipient.name || 'your business')
+    .replace(/{{first_name}}/gi,    meta.first_name    || (meta.name || meta.business_name || recipient.name || 'there').split(' ')[0] || 'there')
+    .replace(/{{business_name}}/gi, meta.business_name || meta.name          || recipient.name || 'your business')
+    .replace(/{{company}}/gi,       meta.company       || meta.name          || meta.business_name || recipient.name || 'your business')
+    .replace(/{{city}}/gi,          meta.city          || 'your city')
+    .replace(/{{state}}/gi,         meta.state         || 'your state')
+    .replace(/{{email}}/gi,         recipient.email)
+    .replace(/{{phone}}/gi,         meta.phone         || '')
+    .replace(/{{website}}/gi,       meta.website       || '')
+    .replace(/{{rating}}/gi,        meta.rating        || 'highly rated');
 
   const rawSubject = recipient.subject_override || campaign.subject;
   const rawBody = recipient.body_override || campaign.body;
@@ -207,12 +193,10 @@ export async function GET() {
   const bodyText = personalize(rawBody);
   const bodyHtml = toHtml(bodyText);
 
-  // Get the right transporter for this recipient's assigned sender
   const senderEmail = recipient.sender_email || null;
   const transporter = await getTransporter(senderEmail);
   const fromEmail = senderEmail || process.env.GMAIL_USER;
 
-  // No sender account available — unlock campaign and return clear error
   if (!transporter) {
     await supabase.from('campaigns').update({ status: 'in_progress' }).eq('id', campaign.id);
     return NextResponse.json({
@@ -257,12 +241,10 @@ export async function GET() {
     });
 
   } catch (err: any) {
-    // If this sender account failed, try falling back to default account
     const isRetry = recipient.status === 'failed';
     let finalError = err.message;
 
     if (senderEmail && !isRetry) {
-      // Try once more with default account
       try {
         const fallbackTransporter = await getTransporter(null);
         if (!fallbackTransporter) throw new Error('No fallback sender account available');
