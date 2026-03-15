@@ -7,10 +7,62 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com', port: 587, secure: false,
-  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
-});
+// Cache transporters so we don't recreate them every cron run
+const transporterCache: Record<string, nodemailer.Transporter> = {};
+
+async function getTransporter(senderEmail: string | null): Promise<nodemailer.Transporter | null> {
+  // If no sender_email on recipient, try env vars first, then first active DB account
+  if (!senderEmail) {
+    if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD && process.env.GMAIL_USER !== 'placeholder@gmail.com') {
+      const key = process.env.GMAIL_USER;
+      if (!transporterCache[key]) {
+        transporterCache[key] = nodemailer.createTransport({
+          host: 'smtp.gmail.com', port: 587, secure: false,
+          auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+        });
+      }
+      return transporterCache[key];
+    }
+    // No env vars — try first active sender account in DB
+    const { data: fallbackAccount } = await supabase
+      .from('sender_accounts')
+      .select('email, app_password')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .single();
+    if (!fallbackAccount) return null; // No account anywhere
+    if (!transporterCache[fallbackAccount.email]) {
+      transporterCache[fallbackAccount.email] = nodemailer.createTransport({
+        host: 'smtp.gmail.com', port: 587, secure: false,
+        auth: { user: fallbackAccount.email, pass: fallbackAccount.app_password },
+      });
+    }
+    return transporterCache[fallbackAccount.email];
+  }
+
+  // Look up the specific account from Supabase
+  if (!transporterCache[senderEmail]) {
+    const { data: account } = await supabase
+      .from('sender_accounts')
+      .select('email, app_password')
+      .eq('email', senderEmail)
+      .eq('is_active', true)
+      .single();
+
+    if (!account) {
+      // Account not found or disabled — fall back to default
+      return getTransporter(null);
+    }
+
+    transporterCache[senderEmail] = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 587, secure: false,
+      auth: { user: account.email, pass: account.app_password },
+    });
+  }
+
+  return transporterCache[senderEmail];
+}
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -36,15 +88,12 @@ function inWindow(windowStart: string, windowEnd: string): boolean {
   return istMinutes >= startMin && istMinutes <= endMin;
 }
 
-// Calculate required gap in minutes between emails based on window duration and daily limit
 function getRequiredGapMinutes(windowStart: string, windowEnd: string, dailyLimit: number): number {
   const [sh, sm] = windowStart.split(':').map(Number);
   const [eh, em] = windowEnd.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
-  // Handle overnight windows (e.g. 20:00–01:00)
   const windowMinutes = endMin > startMin ? endMin - startMin : (24 * 60 - startMin) + endMin;
-  // Gap = window duration / daily limit, minimum 5 minutes (cron frequency)
   return Math.max(5, Math.floor(windowMinutes / dailyLimit));
 }
 
@@ -69,7 +118,7 @@ export async function GET() {
 
   if (!campaign) return NextResponse.json({ message: 'All campaigns outside send window' });
 
-  // Check if enough time has passed since last email (smart spacing)
+  // Smart spacing — check if enough time has passed since last send
   const isFollowUp = !!campaign.parent_campaign_id;
   if (!isFollowUp) {
     const requiredGapMin = getRequiredGapMinutes(
@@ -85,7 +134,7 @@ export async function GET() {
     }
   }
 
-  // Atomic lock — prevents double-send if cron fires twice
+  // Atomic lock
   const { data: locked } = await supabase
     .from('campaigns')
     .update({ status: 'sending' })
@@ -96,7 +145,7 @@ export async function GET() {
 
   if (!locked) return NextResponse.json({ message: 'Campaign already being processed' });
 
-  // Get the single next pending recipient
+  // Get next pending recipient
   const { data: pendingRecs } = await supabase
     .from('recipients')
     .select('*')
@@ -104,7 +153,7 @@ export async function GET() {
     .eq('status', 'pending')
     .limit(1);
 
-  // If no pending, try one failed recipient for a single retry
+  // Retry one failed recipient if no pending
   const { data: failedRecs } = !pendingRecs?.length ? await supabase
     .from('recipients')
     .select('*')
@@ -115,13 +164,13 @@ export async function GET() {
 
   const recipient = pendingRecs?.[0] ?? failedRecs?.[0];
 
-  // No recipients left — mark campaign done
+  // No recipients left
   if (!recipient) {
     await supabase.from('campaigns').update({ status: 'done' }).eq('id', campaign.id);
     return NextResponse.json({ message: 'Campaign complete, marked done' });
   }
 
-  // Re-check window right before sending
+  // Re-check window
   if (!isFollowUp && !inWindow(campaign.window_start || '20:00', campaign.window_end || '01:00')) {
     await supabase.from('campaigns').update({ status: 'in_progress' }).eq('id', campaign.id);
     return NextResponse.json({ message: 'Window closed, will resume next window' });
@@ -136,7 +185,7 @@ export async function GET() {
     return NextResponse.json({ message: `Skipped invalid email: ${recipient.email}` });
   }
 
-  // Parse metadata for personalization
+  // Parse metadata
   let meta: Record<string, string> = {};
   try { meta = recipient.metadata ? JSON.parse(recipient.metadata) : {}; } catch { meta = {}; }
 
@@ -158,9 +207,23 @@ export async function GET() {
   const bodyText = personalize(rawBody);
   const bodyHtml = toHtml(bodyText);
 
+  // Get the right transporter for this recipient's assigned sender
+  const senderEmail = recipient.sender_email || null;
+  const transporter = await getTransporter(senderEmail);
+  const fromEmail = senderEmail || process.env.GMAIL_USER;
+
+  // No sender account available — unlock campaign and return clear error
+  if (!transporter) {
+    await supabase.from('campaigns').update({ status: 'in_progress' }).eq('id', campaign.id);
+    return NextResponse.json({
+      error: 'No sender account configured. Go to the Senders tab and add a Gmail/Workspace account with an app password.',
+      action_required: true,
+    }, { status: 400 });
+  }
+
   try {
     await transporter.sendMail({
-      from: `"${campaign.from_name}" <${process.env.GMAIL_USER}>`,
+      from: `"${campaign.from_name}" <${fromEmail}>`,
       to: recipient.email,
       subject,
       html: bodyHtml,
@@ -181,19 +244,56 @@ export async function GET() {
 
     const newStatus = (remaining ?? 0) > 0 ? 'in_progress' : 'done';
 
-    // Save last_sent_at so next cron run knows when we last sent
     await supabase.from('campaigns')
       .update({ status: newStatus, sent_count: totalSent, last_sent_at: new Date().toISOString() })
       .eq('id', campaign.id);
 
-    return NextResponse.json({ success: true, sent_to: recipient.email, status: newStatus, total_sent: totalSent });
+    return NextResponse.json({
+      success: true,
+      sent_to: recipient.email,
+      sent_from: fromEmail,
+      status: newStatus,
+      total_sent: totalSent,
+    });
 
   } catch (err: any) {
+    // If this sender account failed, try falling back to default account
     const isRetry = recipient.status === 'failed';
+    let finalError = err.message;
+
+    if (senderEmail && !isRetry) {
+      // Try once more with default account
+      try {
+        const fallbackTransporter = await getTransporter(null);
+        if (!fallbackTransporter) throw new Error('No fallback sender account available');
+        await fallbackTransporter.sendMail({
+          from: `"${campaign.from_name}" <${process.env.GMAIL_USER}>`,
+          to: recipient.email,
+          subject,
+          html: bodyHtml,
+          text: bodyText,
+        });
+        await supabase.from('recipients')
+          .update({ status: 'sent', sent_at: new Date().toISOString(), error: null })
+          .eq('id', recipient.id);
+        const totalSent = (campaign.sent_count || 0) + 1;
+        const { count: remaining } = await supabase
+          .from('recipients').select('id', { count: 'exact', head: true })
+          .eq('campaign_id', campaign.id).eq('status', 'pending');
+        const newStatus = (remaining ?? 0) > 0 ? 'in_progress' : 'done';
+        await supabase.from('campaigns')
+          .update({ status: newStatus, sent_count: totalSent, last_sent_at: new Date().toISOString() })
+          .eq('id', campaign.id);
+        return NextResponse.json({ success: true, sent_to: recipient.email, sent_from: process.env.GMAIL_USER, fallback: true, status: newStatus, total_sent: totalSent });
+      } catch (fallbackErr: any) {
+        finalError = `Primary: ${err.message} | Fallback: ${fallbackErr.message}`;
+      }
+    }
+
     await supabase.from('recipients')
       .update({
         status: 'failed',
-        error: err.message,
+        error: finalError,
         ...(isRetry ? { retry_attempted: new Date().toISOString() } : {})
       })
       .eq('id', recipient.id);
@@ -202,6 +302,6 @@ export async function GET() {
       .update({ status: 'in_progress' })
       .eq('id', campaign.id);
 
-    return NextResponse.json({ error: err.message, recipient: recipient.email }, { status: 500 });
+    return NextResponse.json({ error: finalError, recipient: recipient.email }, { status: 500 });
   }
 }

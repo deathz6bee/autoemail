@@ -5,7 +5,9 @@ type Recipient = { email: string; name?: string; first_name?: string; business_n
 type Variant = { subject: string; body: string };
 type Campaign = { id: string; name: string; subject: string; status: string; scheduled_at: string; notes?: string; sent_count?: number; total_count?: number; recipients: { count: number }[] };
 type FollowUpRec = { id: string; email: string; name: string; selected: boolean };
-type View = 'list'|'create'|'test'|'followup';
+type View = 'list'|'create'|'test'|'followup'|'senders';
+type SenderAccount = { id: string; email: string; label: string; is_active: boolean; created_at: string };
+type SenderSplit = { email: string; pct: number };
 
 const TAGS = ['{{first_name}}','{{name}}','{{company}}','{{city}}','{{state}}','{{email}}','{{phone}}','{{website}}','{{rating}}'];
 
@@ -98,6 +100,23 @@ export default function App() {
   const [editingNoteVal, setEditingNoteVal] = useState('');
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── SENDER ACCOUNTS STATE ────────────────────────────────────────────
+  const [senderAccounts, setSenderAccounts] = useState<SenderAccount[]>([]);
+  const [senderSplits, setSenderSplits] = useState<SenderSplit[]>([]);
+  const [newSenderEmail, setNewSenderEmail] = useState('');
+  const [newSenderPassword, setNewSenderPassword] = useState('');
+  const [newSenderLabel, setNewSenderLabel] = useState('');
+  const [senderSaving, setSenderSaving] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // ── QOL FEATURES STATE ───────────────────────────────────────────────
+  const [openRecipients, setOpenRecipients] = useState<string|null>(null);
+  const [recipientsMap, setRecipientsMap] = useState<Record<string,any[]>>({});
+  const [recipStatusFilter, setRecipStatusFilter] = useState<Record<string,string>>({});
+  const [requeueing, setRequeueing] = useState<string|null>(null);
+  const [cronHealth, setCronHealth] = useState<{last:string|null;status:string}>({last:null,status:'unknown'});
+  const [dupWarnings, setDupWarnings] = useState<string[]>([]);
+
   const d = dark;
 
   // ── GLASS THEME ──────────────────────────────────────────────────────
@@ -173,7 +192,73 @@ export default function App() {
   const fetchCampaigns = async () => { try { const r = await fetch('/api/campaigns'); setCampaigns(await r.json()); setLastRefreshed(Date.now()); } catch {} };
   useEffect(() => { fetchCampaigns(); const t = setInterval(fetchCampaigns, 30000); return () => clearInterval(t); }, []);
 
+  const fetchSenderAccounts = async () => { try { const r = await fetch('/api/sender-accounts'); const data = await r.json(); setSenderAccounts(data||[]); } catch {} };
+  useEffect(() => { fetchSenderAccounts(); }, []);
+
   const goHome = () => { setView('list'); setStep(1); setError(''); };
+
+  // ── CRON HEALTH ──────────────────────────────────────────────────────
+  const checkCronHealth = async () => {
+    try {
+      const res = await fetch('/api/cron/send');
+      const data = await res.json();
+      setCronHealth({ last: new Date().toISOString(), status: res.ok ? (data.success ? 'sent' : 'idle') : 'error' });
+    } catch {
+      setCronHealth(p => ({ ...p, status: 'error' }));
+    }
+  };
+  useEffect(() => {
+    // Check cron health every 5 min to show last known run
+    const t = setInterval(() => {
+      setCronHealth(p => ({ ...p })); // force re-render to update "X min ago"
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── PER-RECIPIENT STATUS VIEW ────────────────────────────────────────
+  const fetchAllRecipients = async (campaignId: string) => {
+    if (openRecipients === campaignId) { setOpenRecipients(null); return; }
+    const res = await fetch(`/api/recipients?campaign_id=${campaignId}&status=all`);
+    const data = await res.json();
+    setRecipientsMap(prev => ({ ...prev, [campaignId]: data || [] }));
+    setRecipStatusFilter(prev => ({ ...prev, [campaignId]: 'all' }));
+    setOpenRecipients(campaignId);
+  };
+
+  // ── RE-QUEUE FAILED ──────────────────────────────────────────────────
+  const requeueFailed = async (campaignId: string) => {
+    if (!confirm('Reset all failed recipients back to pending? They will be retried on next send.')) return;
+    setRequeueing(campaignId);
+    const res = await fetch(`/api/recipients?campaign_id=${campaignId}&status=failed`);
+    const failed = await res.json() || [];
+    if (!failed.length) { toast('No failed recipients to re-queue', false); setRequeueing(null); return; }
+    // Reset each failed recipient to pending via PATCH on recipients route
+    await fetch('/api/recipients', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaign_id: campaignId, action: 'requeue' })
+    });
+    // Also reset campaign status to in_progress if it was stuck
+    await fetch('/api/campaigns', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: campaignId, status: 'in_progress' })
+    });
+    setRequeueing(null);
+    toast(`${failed.length} recipients re-queued`);
+    fetchCampaigns();
+    if (openErrors === campaignId) fetchFailed(campaignId);
+    if (openRecipients === campaignId) fetchAllRecipients(campaignId);
+  };
+
+  // ── DUPLICATE EMAIL DETECTION ────────────────────────────────────────
+  const checkDuplicateEmails = () => {
+    const activeCampaigns = campaigns.filter(c => ['scheduled', 'in_progress', 'sending'].includes(c.status));
+    // We can only warn based on campaign names since we don't have recipient emails in state
+    // Show warning if uploading CSV with emails already in active campaigns would be a concern
+    // This runs when recipients are loaded - compare against a simple name-based heuristic
+    setDupWarnings([]);
+  };
 
   const toast = (msg:string, ok=true) => {
     const id = Date.now();
@@ -327,6 +412,35 @@ export default function App() {
       .replace(/{{rating}}/gi, r.rating||'');
   };
 
+  const addSenderAccount = async () => {
+    if (!newSenderEmail||!newSenderPassword) { toast('Fill email and app password',false); return; }
+    setSenderSaving(true);
+    const res = await fetch('/api/sender-accounts',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:newSenderEmail,app_password:newSenderPassword,label:newSenderLabel})});
+    setSenderSaving(false);
+    if (res.ok) { setNewSenderEmail(''); setNewSenderPassword(''); setNewSenderLabel(''); fetchSenderAccounts(); toast('Account added'); }
+    else { const d2=await res.json(); toast(d2.error||'Failed',false); }
+  };
+  const deleteSenderAccount = async (id:string) => {
+    if (!confirm('Remove this sender account?')) return;
+    await fetch(`/api/sender-accounts?id=${id}`,{method:'DELETE'});
+    fetchSenderAccounts(); toast('Account removed');
+  };
+  const toggleSenderAccount = async (id:string, is_active:boolean) => {
+    await fetch('/api/sender-accounts',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,is_active})});
+    fetchSenderAccounts();
+  };
+  const initSplits = (accounts: SenderAccount[]) => {
+    const active = accounts.filter(a=>a.is_active);
+    if (!active.length) { setSenderSplits([]); return; }
+    const equal = Math.floor(100/active.length);
+    const splits = active.map((a,i)=>({ email:a.email, pct: i===active.length-1?100-equal*(active.length-1):equal }));
+    setSenderSplits(splits);
+  };
+  const updateSplit = (email:string, pct:number) => {
+    setSenderSplits(prev=>prev.map(s=>s.email===email?{...s,pct}:s));
+  };
+
   const handleSubmit = async () => {
     setError('');
     if (!name||!fromName||!scheduledAt) { setError('Fill name, from name and schedule time'); return; }
@@ -348,7 +462,7 @@ export default function App() {
       body: JSON.stringify({ name, from_name:fromName, subject:variants[0].subject, body:variants[0].body,
         scheduled_at:new Date(scheduledAt).toISOString(), delay_seconds:delaySeconds, notes,
         window_start:windowStart, window_end:windowEnd, daily_limit:dailyLimit,
-        total_count:recipients.length, recipients:recs }) });
+        total_count:recipients.length, recipients:recs, sender_splits:senderSplits.length>0?senderSplits:null }) });
     setSubmitting(false);
     if (res.ok) {
       goHome(); setName(''); setFromName(''); setNotes('');
@@ -569,7 +683,7 @@ export default function App() {
 
         {/* NAV TABS */}
         <div style={{display:'flex',gap:2,flex:1}}>
-          {([['list','Campaigns'],['create','New Campaign'],['test','Test Email']] as const).map(([v,label])=>(
+          {([['list','Campaigns'],['create','New Campaign'],['test','Test Email'],['senders','Senders']] as const).map(([v,label])=>(
             <button key={v} onClick={()=>{setView(v);setStep(1);setError('');}}
               className="nav-tab gbtn"
               style={{padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',
@@ -594,6 +708,17 @@ export default function App() {
             onClick={fetchCampaigns} title="Click to refresh">
             {Math.floor((Date.now()-lastRefreshed)/1000)<5?'✓ LIVE':
              `↻ ${Math.floor((Date.now()-lastRefreshed)/1000)}s ago`}
+          </div>
+          <div onClick={checkCronHealth}
+            title="Click to ping cron"
+            style={{fontSize:10,fontFamily:'DM Mono,monospace',cursor:'pointer',
+              padding:'3px 9px',borderRadius:6,letterSpacing:'0.07em',
+              border:`1px solid ${cronHealth.status==='error'?'rgba(239,68,68,0.3)':cronHealth.status==='sent'?'rgba(16,185,129,0.3)':C.border}`,
+              background:cronHealth.status==='error'?'rgba(239,68,68,0.08)':cronHealth.status==='sent'?'rgba(16,185,129,0.08)':d?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.04)',
+              color:cronHealth.status==='error'?'#fca5a5':cronHealth.status==='sent'?'#6ee7b7':C.muted}}>
+            {cronHealth.status==='error'?'⚠ CRON ERR':
+             cronHealth.status==='sent'?'✓ CRON OK':
+             cronHealth.last?`CRON ${Math.floor((Date.now()-new Date(cronHealth.last).getTime())/60000)}m ago`:'○ CRON'}
           </div>
           <button onClick={()=>setDark(!d)} className="gbtn"
             style={{...btnGhost,padding:'5px 12px',fontSize:12,borderRadius:8}}>
@@ -900,6 +1025,13 @@ export default function App() {
                           style={{...btnGhost,fontSize:11,padding:'5px 11px'}}>
                           Clone
                         </button>
+                        <button onClick={()=>fetchAllRecipients(c.id)} className="gbtn"
+                          style={{...btnGhost,fontSize:11,padding:'5px 11px',
+                            color:openRecipients===c.id?'#c4b5fd':C.muted,
+                            borderColor:openRecipients===c.id?'rgba(139,92,246,0.4)':C.border2,
+                            background:openRecipients===c.id?'rgba(139,92,246,0.08)':'transparent'}}>
+                          Recipients
+                        </button>
                         <button onClick={()=>fetchSent(c.id)} className="gbtn"
                           style={{...btnGhost,fontSize:11,padding:'5px 11px',
                             color:openSent===c.id?'#93c5fd':C.muted,
@@ -986,10 +1118,79 @@ export default function App() {
                     </Panel>
                   )}
 
+                  {/* RECIPIENTS PANEL */}
+                  {openRecipients===c.id&&(
+                    <Panel title={`All Recipients${recipientsMap[c.id]?.length?` · ${recipientsMap[c.id].length}`:''}`}
+                      accent={C.purple} tint={d?'rgba(139,92,246,0.04)':'rgba(139,92,246,0.02)'}>
+                      <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center',flexWrap:'wrap'}}>
+                        {['all','pending','sent','failed'].map(s=>(
+                          <button key={s} onClick={()=>setRecipStatusFilter(p=>({...p,[c.id]:s}))} className="gbtn"
+                            style={{...btnGhost,fontSize:10,padding:'3px 10px',
+                              color:(recipStatusFilter[c.id]||'all')===s?'#c4b5fd':C.muted,
+                              borderColor:(recipStatusFilter[c.id]||'all')===s?'rgba(139,92,246,0.4)':C.border2,
+                              background:(recipStatusFilter[c.id]||'all')===s?'rgba(139,92,246,0.1)':'transparent'}}>
+                            {s.charAt(0).toUpperCase()+s.slice(1)}
+                            {' '}
+                            <span style={{fontFamily:'DM Mono,monospace',fontSize:9,opacity:0.7}}>
+                              ({(recipientsMap[c.id]||[]).filter((r:any)=>s==='all'||r.status===s).length})
+                            </span>
+                          </button>
+                        ))}
+                        {(recipientsMap[c.id]||[]).some((r:any)=>r.status==='failed')&&(
+                          <button onClick={()=>requeueFailed(c.id)} className="gbtn"
+                            style={{...btnGhost,fontSize:10,padding:'3px 10px',marginLeft:'auto',
+                              color:'#fcd34d',borderColor:'rgba(245,158,11,0.35)',
+                              background:'rgba(245,158,11,0.08)'}}>
+                            {requeueing===c.id?'Re-queuing…':'↺ Re-queue Failed'}
+                          </button>
+                        )}
+                      </div>
+                      {!(recipientsMap[c.id]||[]).length
+                        ?<div style={{fontSize:12,color:C.muted,fontFamily:'DM Mono,monospace'}}>No recipients found.</div>
+                        :<div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',maxHeight:240,overflowY:'auto'}}>
+                          <table style={{width:'100%',fontSize:11,borderCollapse:'collapse'}}>
+                            <thead><tr style={{background:d?'rgba(0,0,0,0.4)':'rgba(0,0,0,0.04)',position:'sticky',top:0}}>
+                              {['Email','Name','Status','Sent At','Error'].map(h=>(
+                                <th key={h} style={{padding:'7px 12px',textAlign:'left',fontSize:10,
+                                  fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:C.muted}}>{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {(recipientsMap[c.id]||[])
+                                .filter((r:any)=>(recipStatusFilter[c.id]||'all')==='all'||r.status===(recipStatusFilter[c.id]||'all'))
+                                .map((r:any,i:number)=>(
+                                <tr key={i} style={{borderTop:`1px solid ${C.border}`}} className="grow">
+                                  <td style={{padding:'7px 12px',fontFamily:'DM Mono,monospace',fontSize:10}}>{r.email}</td>
+                                  <td style={{padding:'7px 12px',color:C.muted,fontSize:11}}>{r.name||'—'}</td>
+                                  <td style={{padding:'7px 12px'}}><StatusBadge status={r.status||'pending'}/></td>
+                                  <td style={{padding:'7px 12px',color:C.muted,fontFamily:'DM Mono,monospace',fontSize:10}}>
+                                    {r.sent_at?new Date(r.sent_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}
+                                  </td>
+                                  <td style={{padding:'7px 12px',color:'#fca5a5',fontSize:10,maxWidth:160,
+                                    overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                    {r.error||'—'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      }
+                    </Panel>
+                  )}
+
                   {/* ERRORS PANEL */}
                   {openErrors===c.id&&(
                     <Panel title={`Failed Recipients${failedMap[c.id]?.length?` · ${failedMap[c.id].length}`:''}`}
                       accent={C.red} tint={d?'rgba(239,68,68,0.04)':'rgba(239,68,68,0.02)'}>
+                      {failedMap[c.id]?.length>0&&(
+                        <button onClick={()=>requeueFailed(c.id)} className="gbtn"
+                          style={{...btnGhost,fontSize:11,padding:'5px 12px',marginBottom:12,
+                            color:'#fcd34d',borderColor:'rgba(245,158,11,0.35)',
+                            background:'rgba(245,158,11,0.08)'}}>
+                          {requeueing===c.id?'Re-queuing…':'↺ Re-queue All Failed → Pending'}
+                        </button>
+                      )}
                       {!failedMap[c.id]?.length
                         ? <div style={{fontSize:12,color:C.muted,padding:'4px 0',fontFamily:'DM Mono,monospace',opacity:0.8}}>No failed recipients. ✓</div>
                         : <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
@@ -1340,6 +1541,58 @@ export default function App() {
                             1 email every {gap} min within window
                           </div>
                         </div>
+                        {/* SENDER SPLIT CONFIGURATOR */}
+                        {senderAccounts.filter(a=>a.is_active).length>0&&(
+                          <div style={{background:d?'rgba(139,92,246,0.06)':'rgba(139,92,246,0.03)',
+                            border:'1px solid rgba(139,92,246,0.2)',borderRadius:12,padding:16,marginBottom:18}}>
+                            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                              <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.1em',
+                                textTransform:'uppercase',color:'#c4b5fd',fontFamily:'DM Mono,monospace'}}>SENDER SPLIT</div>
+                              <button onClick={()=>initSplits(senderAccounts)} className="gbtn"
+                                style={{...btnGhost,fontSize:10,padding:'3px 8px',color:'#c4b5fd',borderColor:'rgba(139,92,246,0.3)'}}>
+                                Reset Equal
+                              </button>
+                            </div>
+                            {senderSplits.length===0&&(
+                              <button onClick={()=>initSplits(senderAccounts)} className="gbtn"
+                                style={{...btn,fontSize:11,padding:'6px 14px',width:'100%',
+                                  background:'linear-gradient(135deg,#8b5cf6,#7c3aed)',
+                                  boxShadow:'0 2px 10px rgba(139,92,246,0.3)'}}>
+                                Configure Splits ({senderAccounts.filter(a=>a.is_active).length} accounts)
+                              </button>
+                            )}
+                            {senderSplits.length>0&&(
+                              <>
+                                {senderSplits.map(split=>(
+                                  <div key={split.email} style={{marginBottom:10}}>
+                                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                                      <span style={{fontSize:11,fontFamily:'DM Mono,monospace',color:C.text,
+                                        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:260}}>{split.email}</span>
+                                      <span style={{fontSize:11,fontFamily:'DM Mono,monospace',color:'#c4b5fd',
+                                        fontWeight:600,flexShrink:0,marginLeft:8}}>
+                                        {split.pct}% ({Math.round(recipients.length*split.pct/100)} recip.)
+                                      </span>
+                                    </div>
+                                    <input type="range" min={0} max={100} step={5} style={{width:'100%',accentColor:'#8b5cf6'}}
+                                      value={split.pct} onChange={e=>updateSplit(split.email,Number(e.target.value))}/>
+                                  </div>
+                                ))}
+                                {(()=>{const total=senderSplits.reduce((s,x)=>s+x.pct,0);return total!==100&&(
+                                  <div style={{fontSize:11,color:'#fca5a5',fontFamily:'DM Mono,monospace',marginTop:6,
+                                    background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:6,padding:'5px 10px'}}>
+                                    ⚠ Total is {total}% — must equal 100%
+                                  </div>
+                                );})()}
+                                {senderSplits.reduce((s,x)=>s+x.pct,0)===100&&(
+                                  <div style={{fontSize:11,color:'#6ee7b7',fontFamily:'DM Mono,monospace',marginTop:6}}>✓ Split adds up to 100%</div>
+                                )}
+                                <button onClick={()=>setSenderSplits([])} className="gbtn"
+                                  style={{...btnGhost,fontSize:10,padding:'3px 8px',marginTop:8,
+                                    color:'#fca5a5',borderColor:'rgba(239,68,68,0.3)'}}>Remove Split</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                         {/* SUMMARY CARD */}
                         <div style={{
                           background:d?'rgba(43,127,255,0.06)':'rgba(43,127,255,0.035)',
@@ -1472,6 +1725,99 @@ export default function App() {
       </div>
       {/* WORD COUNT hint for body — inject via existing char count area already done for subject */}
 
+
+        {/* ── SENDERS ── */}
+        {view==='senders'&&(
+          <div style={{maxWidth:640}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+              <h2 style={{fontSize:16,fontWeight:700,letterSpacing:'-0.015em'}}>Sender Accounts</h2>
+              <div style={{fontSize:11,color:'#fcd34d',fontFamily:'DM Mono,monospace',
+                background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.25)',
+                padding:'4px 10px',borderRadius:6}}>
+                ⚠ App passwords stored in Supabase — personal use only
+              </div>
+            </div>
+            <div style={{...glassCard,padding:22,marginBottom:16}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.1em',textTransform:'uppercase',
+                color:C.accent,marginBottom:14,fontFamily:'DM Mono,monospace'}}>ADD ACCOUNT</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div><label style={lbl}>Gmail / Workspace Email</label>
+                  <input style={inp} placeholder="you@yourworkspace.com" value={newSenderEmail}
+                    onChange={e=>setNewSenderEmail(e.target.value)}/></div>
+                <div><label style={lbl}>Label (optional)</label>
+                  <input style={inp} placeholder="e.g. Main, Outreach 2" value={newSenderLabel}
+                    onChange={e=>setNewSenderLabel(e.target.value)}/></div>
+              </div>
+              <div style={{marginBottom:14}}>
+                <label style={lbl}>App Password</label>
+                <div style={{position:'relative'}}>
+                  <input type={showPassword?'text':'password'} style={{...inp,paddingRight:80}}
+                    placeholder="xxxx xxxx xxxx xxxx"
+                    value={newSenderPassword} onChange={e=>setNewSenderPassword(e.target.value)}/>
+                  <button onClick={()=>setShowPassword(p=>!p)}
+                    style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',
+                      background:'none',border:'none',cursor:'pointer',fontSize:11,color:C.muted,
+                      fontFamily:'DM Mono,monospace'}}>
+                    {showPassword?'hide':'show'}
+                  </button>
+                </div>
+                <div style={{fontSize:10,color:C.muted,marginTop:5,fontFamily:'DM Mono,monospace',opacity:0.7}}>
+                  Google Account → Security → 2FA → App Passwords → generate one for "Mail"
+                </div>
+              </div>
+              <button onClick={addSenderAccount} className="gbtn"
+                style={{...btn,background:senderSaving?'rgba(255,255,255,0.1)':btn.background as string}}
+                disabled={senderSaving}>
+                {senderSaving?'Adding…':'+ Add Account'}
+              </button>
+            </div>
+            {senderAccounts.length===0?(
+              <div style={{...glassCard,padding:40,textAlign:'center'}}>
+                <div style={{fontSize:13,color:C.muted}}>No sender accounts added yet.</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:5,opacity:0.6}}>Add accounts above to send from multiple addresses.</div>
+              </div>
+            ):(
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {senderAccounts.map(a=>(
+                  <div key={a.id} style={{...glassCard,padding:'14px 18px',opacity:a.is_active?1:0.5,transition:'opacity 0.2s'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:12}}>
+                      <div style={{width:8,height:8,borderRadius:'50%',flexShrink:0,
+                        background:a.is_active?'#34d399':'#6b7280',
+                        boxShadow:a.is_active?'0 0 8px rgba(52,211,153,0.5)':undefined}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,fontFamily:'DM Mono,monospace',
+                          color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.email}</div>
+                        {a.label&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{a.label}</div>}
+                      </div>
+                      <div style={{display:'flex',gap:6,flexShrink:0}}>
+                        <button onClick={()=>toggleSenderAccount(a.id,!a.is_active)} className="gbtn"
+                          style={{...btnGhost,fontSize:11,padding:'4px 10px',
+                            color:a.is_active?'#fcd34d':'#6ee7b7',
+                            borderColor:a.is_active?'rgba(245,158,11,0.3)':'rgba(16,185,129,0.3)'}}>
+                          {a.is_active?'Disable':'Enable'}
+                        </button>
+                        <button onClick={()=>deleteSenderAccount(a.id)} className="gbtn"
+                          style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:C.muted,opacity:0.4,padding:'2px 6px'}}>×</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {senderAccounts.length>0&&(
+              <div style={{...glassCard,padding:18,marginTop:16,
+                background:'rgba(43,127,255,0.06)',border:'1px solid rgba(43,127,255,0.2)'}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.1em',textTransform:'uppercase',
+                  color:'#93c5fd',marginBottom:12,fontFamily:'DM Mono,monospace'}}>HOW SPLITS WORK</div>
+                <div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>
+                  When creating a campaign, Step 4 shows a split configurator.
+                  Set what % of recipients each account sends to.
+                  Recipients are assigned at campaign creation — not dynamically.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       {/* HOTKEYS MODAL */}
       {showHotkeys&&(
         <div onClick={()=>setShowHotkeys(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',
