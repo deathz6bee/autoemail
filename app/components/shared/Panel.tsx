@@ -1,3 +1,4 @@
+'use client';
 import { Theme } from '../types';
 
 interface Props {

@@ -1,3 +1,4 @@
+'use client';
 import { Campaign, Theme } from '../types';
 
 interface Props {
