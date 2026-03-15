@@ -51,7 +51,6 @@ export function NavBar({
 
       {/* TABS */}
       <div style={{ display: 'flex', gap: 2, flex: 1 }}>
-        {(['list', 'Campaigns'], ['create', 'New Campaign'], ['test', 'Test Email'], ['senders', 'Senders']) as unknown as never}
         {(
           [
             ['list', 'Campaigns'],
