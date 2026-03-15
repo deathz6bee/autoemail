@@ -155,7 +155,7 @@ export function CampaignList(p: Props) {
           <option value="name">Sort: Name</option>
           <option value="sent">Sort: Sent</option>
         </select>
-        <button onClick={() => p.setShowRecipSearch(v => !v)} className="gbtn"
+        <button onClick={() => p.setShowRecipSearch(!p.showRecipSearch)} className="gbtn"
           style={{ ...p.btnGhost, fontSize: 11, padding: '6px 12px', color: p.showRecipSearch ? C.accent : C.muted, borderColor: p.showRecipSearch ? 'rgba(43,127,255,0.4)' : C.border2 }}>
           🔍 Recipients
         </button>
