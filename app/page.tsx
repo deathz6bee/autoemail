@@ -14,7 +14,7 @@ import { TestEmailView } from './components/TestEmailView';
 import { SendersView } from './components/SendersView';
 
 export default function App() {
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(false);
   const [view, setView] = useState<View>('list');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [step, setStep] = useState(1);

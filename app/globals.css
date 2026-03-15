@@ -1,8 +1,8 @@
 /* AutoEmail — no Tailwind needed, app uses inline styles */
 
 :root {
-  --background: #05080f;
-  --foreground: #f0f4ff;
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 * {
