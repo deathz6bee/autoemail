@@ -5,13 +5,14 @@ import {
   SenderAccount, SenderSplit, ToastItem, CronHealth,
   makeTheme, makeStyles,
 } from './components/types';
-import { NavBar } from './components/NavBar';
 import { StatsBar } from './components/StatsBar';
 import { CampaignList } from './components/CampaignList';
 import { CreateWizard } from './components/CreateWizard';
 import { FollowUpView } from './components/FollowUpView';
 import { TestEmailView } from './components/TestEmailView';
 import { SendersView } from './components/SendersView';
+import { Sidebar } from './components/Sidebar';
+import { ContactsView } from './components/ContactsView';
 
 export default function App() {
   const [dark, setDark] = useState(false);
@@ -68,7 +69,7 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [templates, setTemplates] = useState<{ id: string; name: string; subject: string; body: string }[]>(() => { try { return JSON.parse(localStorage.getItem('ae_templates') || '[]') } catch { return [] } });
   const [showTemplates, setShowTemplates] = useState(false);
-  const [unsubList, setUnsubList] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('ae_unsub') || '[]') } catch { return [] } });
+  const [unsubList, setUnsubList] = useState<string[]>([]);
   const [showUnsub, setShowUnsub] = useState(false);
   const [unsubInput, setUnsubInput] = useState('');
   const [sentMap, setSentMap] = useState<Record<string, any[]>>({});
@@ -102,6 +103,10 @@ export default function App() {
   const [recipStatusFilter, setRecipStatusFilter] = useState<Record<string, string>>({});
   const [requeueing, setRequeueing] = useState<string | null>(null);
   const [cronHealth, setCronHealth] = useState<CronHealth>({ last: null, status: 'unknown' });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Contact book
+  const [contacts, setContacts] = useState<Recipient[]>([]);
+  const [contactSearch, setContactSearch] = useState('');
 
   const d = dark;
   const C = makeTheme(d);
@@ -117,6 +122,25 @@ export default function App() {
     try { const r = await fetch('/api/sender-accounts'); const data = await r.json(); setSenderAccounts(data || []); } catch {}
   };
   useEffect(() => { fetchSenderAccounts(); }, []);
+  useEffect(() => { fetchUnsub(); }, []);
+
+  const fetchContacts = async () => {
+    try { const r = await fetch('/api/contacts'); setContacts(await r.json()); } catch {}
+  };
+  useEffect(() => { fetchContacts(); }, []);
+  const deleteContact = async (email: string) => {
+    await fetch(`/api/contacts?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    fetchContacts();
+  };
+  const importContactsFromCSV = async (recs: Recipient[]) => {
+    if (!recs.length) return;
+    await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: recs }) });
+    fetchContacts(); toast(`${recs.length} contacts imported`);
+  };
+  const loadContactsAsRecipients = (selected: Recipient[]) => {
+    setRecipients(selected); setFilteredCount(0);
+    setView('create'); setStep(2); toast(`${selected.length} contacts loaded as recipients`);
+  };
 
   const goHome = () => { setView('list'); setStep(1); setError(''); };
 
@@ -166,7 +190,20 @@ export default function App() {
   const saveTags = (t: Record<string, string[]>) => { setTags(t); localStorage.setItem('ae_tags', JSON.stringify(t)); };
   const saveArchived = (a: string[]) => { setArchivedIds(a); localStorage.setItem('ae_archived', JSON.stringify(a)); };
   const saveTemplates = (t: typeof templates) => { setTemplates(t); localStorage.setItem('ae_templates', JSON.stringify(t)); };
-  const saveUnsub = (u: string[]) => { setUnsubList(u); localStorage.setItem('ae_unsub', JSON.stringify(u)); };
+  const fetchUnsub = async () => {
+    try { const r = await fetch('/api/unsub'); setUnsubList(await r.json()); } catch {}
+  };
+  const addUnsub = async (email: string) => {
+    const e = email.toLowerCase().trim();
+    if (!e) return;
+    await fetch('/api/unsub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: e }) });
+    await fetchUnsub();
+  };
+  const removeUnsub = async (email: string) => {
+    await fetch(`/api/unsub?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    await fetchUnsub();
+  };
+  const saveUnsub = (_u: string[]) => {}; // shim — kept for prop compatibility
 
   const archiveCampaign = (id: string) => { saveArchived([...archivedIds, id]); toast('Campaign archived'); };
   const unarchiveCampaign = (id: string) => { saveArchived(archivedIds.filter(x => x !== id)); };
@@ -223,19 +260,33 @@ export default function App() {
     a.download = `${c.name}_sent.csv`; a.click(); toast('CSV downloaded');
   };
 
-  const saveDraftToStorage = () => {
-    const d2 = { name, fromName, notes, recipients, variants, scheduledAt, windowStart, windowEnd, dailyLimit, step };
-    localStorage.setItem('ae_draft', JSON.stringify(d2)); toast('Draft saved');
+  const saveDraftToStorage = async () => {
+    const payload = { name: name || 'Untitled Draft', fromName, notes, recipients, variants, scheduledAt, windowStart, windowEnd, dailyLimit, draft_step: step };
+    const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, from_name: fromName, subject: variants[0].subject || '(draft)', body: variants[0].body || '', scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : new Date(Date.now() + 86400000).toISOString(), delay_seconds: 5, total_count: recipients.length, recipients: [], status: 'draft', draft_meta: JSON.stringify({ fromName, notes, recipients, variants, scheduledAt, windowStart, windowEnd, dailyLimit, draft_step: step }) }) });
+    if (res.ok) { toast('Draft saved'); fetchCampaigns(); } else { toast('Failed to save draft', false); }
   };
   const loadDraftFromStorage = () => {
+    // legacy localStorage fallback
     try {
-      const d2 = JSON.parse(localStorage.getItem('ae_draft') || 'null'); if (!d2) return;
+      const d2 = JSON.parse(localStorage.getItem('ae_draft') || 'null'); if (!d2) { toast('No local draft found', false); return; }
       setName(d2.name || ''); setFromName(d2.fromName || ''); setNotes(d2.notes || '');
       setVariants(d2.variants || [{ subject: '', body: '' }, { subject: '', body: '' }]);
       setScheduledAt(d2.scheduledAt || ''); setWindowStart(d2.windowStart || '20:00');
       setWindowEnd(d2.windowEnd || '01:00'); setDailyLimit(d2.dailyLimit || 40);
       setStep(d2.step || 1); toast('Draft loaded');
     } catch {}
+  };
+  const continueDraft = (c: Campaign) => {
+    try {
+      const meta = JSON.parse((c as any).draft_meta || '{}');
+      setName(c.name || ''); setFromName(meta.fromName || (c as any).from_name || '');
+      setNotes(meta.notes || c.notes || '');
+      setVariants(meta.variants || [{ subject: (c as any).subject || '', body: (c as any).body || '' }, { subject: '', body: '' }]);
+      setScheduledAt(meta.scheduledAt || ''); setWindowStart(meta.windowStart || '20:00');
+      setWindowEnd(meta.windowEnd || '01:00'); setDailyLimit(meta.dailyLimit || 40);
+      setStep(meta.draft_step || 1);
+      setView('create'); toast('Draft loaded — continue where you left off');
+    } catch { toast('Could not load draft', false); }
   };
 
   const softDelete = (id: string, name2: string) => {
@@ -541,24 +592,30 @@ export default function App() {
         h2,h3{margin:0;}
         @keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.6;transform:scale(0.85);}}
         @keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+        @media(max-width:768px){
+          .desktop-sidebar{display:none!important;}
+          .mobile-nav{display:block!important;}
+          .mobile-content{padding:16px 12px 80px!important;}
+        }
       `}</style>
 
-      <NavBar
-        view={view}
-        setView={(v) => { setView(v); setStep(1); setError(''); }}
-        dark={dark}
-        setDark={setDark}
-        lastRefreshed={lastRefreshed}
-        fetchCampaigns={fetchCampaigns}
-        cronHealth={cronHealth}
-        checkCronHealth={checkCronHealth}
-        goHome={goHome}
-        C={C}
-        btnGhost={btnGhost}
-      />
-
-      {/* MAIN CONTENT — all views inside one padded container, fixing the Senders positioning bug */}
-      <div style={{ maxWidth: 940, margin: '0 auto', padding: '32px 22px' }}>
+      {/* APP SHELL */}
+      <div style={{ display: 'flex', minHeight: '100vh' }}>
+        <Sidebar
+          view={view}
+          setView={(v) => { setView(v); setStep(1); setError(''); }}
+          dark={dark}
+          setDark={setDark}
+          lastRefreshed={lastRefreshed}
+          fetchCampaigns={fetchCampaigns}
+          cronHealth={cronHealth}
+          checkCronHealth={checkCronHealth}
+          C={C}
+          campaigns={campaigns}
+          collapsed={sidebarCollapsed}
+          setCollapsed={setSidebarCollapsed}
+        />
+        <div style={{ flex: 1, minWidth: 0, padding: '32px 28px', background: d ? C.bgGrad : '#f8fafc', minHeight: '100vh' }} className="mobile-content">
 
         {/* CAMPAIGN LIST */}
         {view === 'list' && (
@@ -578,6 +635,8 @@ export default function App() {
               unsubList={unsubList}
               unsubInput={unsubInput} setUnsubInput={setUnsubInput}
               saveUnsub={saveUnsub}
+              addUnsub={addUnsub}
+              removeUnsub={removeUnsub}
               toast={toast}
               selectedIds={selectedIds} setSelectedIds={setSelectedIds}
               bulkDelete={bulkDelete}
@@ -586,6 +645,7 @@ export default function App() {
               recipResults={recipResults} recipSearching={recipSearching}
               searchAllRecipients={searchAllRecipients}
               setView={setView} setStep={setStep}
+              continueDraft={continueDraft}
               tags={tags} tagInput={tagInput} setTagInput={setTagInput}
               addTag={addTag} removeTag={removeTag}
               editingNoteId={editingNoteId} setEditingNoteId={setEditingNoteId}
@@ -697,7 +757,21 @@ export default function App() {
             toggleSenderAccount={toggleSenderAccount}
           />
         )}
-      </div>
+        {/* CONTACTS */}
+        {view === 'contacts' && (
+          <ContactsView
+            {...sharedStyles}
+            contacts={contacts}
+            contactSearch={contactSearch} setContactSearch={setContactSearch}
+            deleteContact={deleteContact}
+            importContactsFromCSV={importContactsFromCSV}
+            loadContactsAsRecipients={loadContactsAsRecipients}
+            handleCSV={handleCSV}
+            toast={toast}
+          />
+        )}
+        </div>
+      </div>{/* end app shell */}
 
       {/* HOTKEYS MODAL */}
       {showHotkeys && (

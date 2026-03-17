@@ -65,6 +65,7 @@ interface Props {
   recipientsMap: Record<string, any[]>;
   recipStatusFilter: Record<string, string>;
   setRecipStatusFilter: (f: Record<string, string>) => void;
+  continueDraft?: (c: Campaign) => void;
 }
 
 export function CampaignCard(p: Props) {
@@ -172,6 +173,7 @@ export function CampaignCard(p: Props) {
 
           {/* ACTIONS */}
           <div style={{ display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 320 }}>
+            {c.status === 'draft' && p.continueDraft && actionBtn('✎ Continue', C.accent, d ? 'rgba(43,127,255,0.12)' : '#eff6ff', 'rgba(43,127,255,0.4)', () => p.continueDraft!(c), true)}
             {c.status === 'done' && actionBtn('Follow Up', '#8b5cf6', d ? 'rgba(139,92,246,0.12)' : '#f5f3ff', 'rgba(139,92,246,0.3)', () => p.openFollowUp(c))}
             {c.status === 'scheduled' && actionBtn('▶ Now', '#f59e0b', d ? 'rgba(245,158,11,0.1)' : '#fffbeb', 'rgba(245,158,11,0.3)', () => p.sendNow(c))}
             {c.status === 'scheduled' && actionBtn('Edit', '#10b981', d ? 'rgba(16,185,129,0.1)' : '#ecfdf5', 'rgba(16,185,129,0.3)', () => p.openEdit(c))}

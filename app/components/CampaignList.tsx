@@ -24,6 +24,8 @@ interface Props {
   unsubList: string[];
   unsubInput: string; setUnsubInput: (v: string) => void;
   saveUnsub: (u: string[]) => void;
+  addUnsub?: (email: string) => void;
+  removeUnsub?: (email: string) => void;
   toast: (msg: string, ok?: boolean) => void;
   // selection
   selectedIds: string[]; setSelectedIds: (ids: string[]) => void;
@@ -36,6 +38,7 @@ interface Props {
   // new campaign
   setView: (v: any) => void;
   setStep: (n: number) => void;
+  continueDraft: (c: Campaign) => void;
   // campaign card props (forwarded)
   tags: Record<string, string[]>;
   tagInput: Record<string, string>; setTagInput: (t: Record<string, string>) => void;
@@ -194,7 +197,7 @@ export function CampaignList(p: Props) {
           <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
             <input
               value={p.unsubInput} onChange={e => p.setUnsubInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && p.unsubInput.trim()) { p.saveUnsub([...p.unsubList, p.unsubInput.trim()]); p.setUnsubInput(''); p.toast('Added to unsub list'); } }}
+              onKeyDown={e => { if (e.key === 'Enter' && p.unsubInput.trim()) { p.addUnsub ? p.addUnsub(p.unsubInput.trim()) : p.saveUnsub([...p.unsubList, p.unsubInput.trim()]); p.setUnsubInput(''); p.toast('Added to unsub list'); } }}
               placeholder="email@example.com — press Enter to add"
               style={{ ...p.inp, flex: 1, padding: '7px 12px', fontSize: 12 }}
             />
@@ -204,7 +207,7 @@ export function CampaignList(p: Props) {
               {p.unsubList.map(e => (
                 <span key={e} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 5, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', fontFamily: 'DM Mono,monospace', display: 'flex', alignItems: 'center', gap: 5 }}>
                   {e}
-                  <span onClick={() => p.saveUnsub(p.unsubList.filter(x => x !== e))} style={{ cursor: 'pointer', opacity: 0.6 }}>×</span>
+                  <span onClick={() => p.removeUnsub ? p.removeUnsub(e) : p.saveUnsub(p.unsubList.filter(x => x !== e))} style={{ cursor: 'pointer', opacity: 0.6 }}>×</span>
                 </span>
               ))}
             </div>
@@ -278,6 +281,7 @@ export function CampaignList(p: Props) {
             openRecipients={p.openRecipients} fetchAllRecipients={p.fetchAllRecipients}
             recipientsMap={p.recipientsMap}
             recipStatusFilter={p.recipStatusFilter} setRecipStatusFilter={p.setRecipStatusFilter}
+            continueDraft={p.continueDraft}
           />
         ))}
       </div>

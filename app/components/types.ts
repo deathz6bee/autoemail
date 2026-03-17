@@ -29,7 +29,7 @@ export type Campaign = {
 
 export type FollowUpRec = { id: string; email: string; name: string; selected: boolean };
 
-export type View = 'list' | 'create' | 'test' | 'followup' | 'senders';
+export type View = 'list' | 'create' | 'test' | 'followup' | 'senders' | 'contacts';
 
 export type SenderAccount = { id: string; email: string; label: string; is_active: boolean; created_at: string };
 
@@ -95,14 +95,14 @@ export function makeStyles(C: Theme, d: boolean) {
       : '0 4px 24px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8)',
   };
   const lbl: React.CSSProperties = {
-    display: 'block', fontSize: 11, fontWeight: 700,
+    display: 'block', fontSize: 13, fontWeight: 700,
     letterSpacing: '0.09em', textTransform: 'uppercase',
-    color: C.muted, marginBottom: 7,
+    color: C.muted, marginBottom: 8,
   };
   const inp: React.CSSProperties = {
     display: 'block', width: '100%',
     border: `1px solid ${C.border2}`,
-    borderRadius: 10, padding: '10px 14px', fontSize: 13,
+    borderRadius: 10, padding: '11px 15px', fontSize: 15,
     color: C.text, outline: 'none', boxSizing: 'border-box',
     background: d ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.8)',
     backdropFilter: 'blur(8px)',
@@ -111,7 +111,7 @@ export function makeStyles(C: Theme, d: boolean) {
   const btn: React.CSSProperties = {
     background: 'linear-gradient(135deg, #2b7fff 0%, #1a5fd6 100%)',
     color: '#fff', border: 'none',
-    borderRadius: 10, padding: '10px 22px', fontSize: 13,
+    borderRadius: 10, padding: '11px 24px', fontSize: 15,
     fontWeight: 600, cursor: 'pointer', letterSpacing: '0.01em',
     transition: 'all 0.2s',
     boxShadow: '0 2px 12px rgba(43,127,255,0.35)',
@@ -120,7 +120,7 @@ export function makeStyles(C: Theme, d: boolean) {
     background: d ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
     color: C.muted2,
     border: `1px solid ${C.border2}`,
-    borderRadius: 10, padding: '9px 16px', fontSize: 13,
+    borderRadius: 10, padding: '10px 18px', fontSize: 15,
     fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
     backdropFilter: 'blur(8px)',
   };
